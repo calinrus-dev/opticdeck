@@ -1,0 +1,12 @@
+/bin/
+/dist/
+/.deps/
+/.test-deps/
+/.test-tools/
+/.state/
+/node_modules/
+*.log
+*.test
+*.out
+coverage.*
+.DS_Store

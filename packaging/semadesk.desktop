@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=SemaDesk
+Comment=Open a private virtual Linux desktop in your browser
+Exec=semadesk open
+Icon=semadesk
+Terminal=false
+Type=Application
+Categories=Utility;
+Keywords=Virtual Desktop;X11;Accessibility;VNC;

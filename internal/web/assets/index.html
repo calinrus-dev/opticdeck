@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>SemaDesk · Virtual Linux desktop</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header>
+    <div class="brand"><span class="mark" aria-hidden="true">S</span><div><strong>SemaDesk</strong><span class="caption">Virtual Linux desktop</span></div></div>
+    <span id="connection" class="status" role="status">Connecting…</span>
+    <label class="debug-toggle"><input id="hitboxes" type="checkbox"> Show hitboxes</label>
+    <button id="takeover" type="button" aria-describedby="mode" disabled>Take control</button>
+  </header>
+  <main>
+    <section id="desktop-panel" aria-label="Virtual desktop">
+      <div class="desktop-toolbar"><span id="mode" role="status">Waiting for session</span><span id="metrics">Waiting for snapshot</span></div>
+      <div id="viewport">
+        <div id="scaled-frame">
+          <div id="stage">
+            <div id="rfb-screen" aria-hidden="true"></div>
+            <div id="semantic-overlay" aria-label="Native applications" role="region"></div>
+          </div>
+        </div>
+      </div>
+      <p id="desktop-notice">Take control to pause the agent and use your mouse and keyboard in the virtual desktop.</p>
+      <div id="error" role="alert" hidden></div>
+    </section>
+    <aside aria-label="Session details">
+      <h1>Activity</h1>
+      <p class="help">The log shows action names and omits typed text, keys, and clipboard contents.</p>
+      <p id="activity-empty" class="help">No actions yet.</p>
+      <ol id="action-log" aria-label="Action log" aria-live="polite" aria-relevant="additions"></ol>
+      <section class="clipboard-panel" aria-labelledby="clipboard-heading">
+        <h2 id="clipboard-heading">Session clipboard</h2>
+        <label for="clipboard">Text</label>
+        <textarea id="clipboard" rows="4" maxlength="1048576" spellcheck="false" aria-describedby="clipboard-help" disabled></textarea>
+        <div class="clipboard-buttons"><button id="clipboard-read" type="button" disabled>Read from session</button><button id="clipboard-write" type="button" disabled>Send to session</button></div>
+        <p id="clipboard-help" class="help">Take control to use the clipboard. After sending text, paste it in the app with Ctrl+V.</p>
+      </section>
+    </aside>
+  </main>
+  <noscript>Enable JavaScript to connect to the desktop and sync its controls.</noscript>
+  <script type="module" src="/overlay.js"></script>
+</body>
+</html>

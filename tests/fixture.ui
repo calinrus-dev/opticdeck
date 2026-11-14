@@ -1,0 +1,83 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+  <requires lib="gtk+" version="3.20"/>
+  <object class="GtkWindow" id="fixture">
+    <property name="title">SemaDesk fixture</property>
+    <property name="default-width">540</property>
+    <property name="default-height">360</property>
+    <property name="window-position">center</property>
+    <child>
+      <object class="GtkBox" id="content">
+        <property name="visible">True</property>
+        <property name="orientation">vertical</property>
+        <property name="spacing">12</property>
+        <property name="margin">20</property>
+        <child>
+          <object class="GtkLabel" id="heading">
+            <property name="visible">True</property>
+            <property name="label">Aplicación GTK3 de prueba — SemaDesk</property>
+            <property name="xalign">0</property>
+          </object>
+        </child>
+        <child>
+          <object class="GtkEntry" id="editor">
+            <property name="visible">True</property>
+            <property name="text">Texto inicial</property>
+            <property name="placeholder-text">Texto UTF-8</property>
+            <child internal-child="accessible">
+              <object class="AtkObject" id="editor_accessible">
+                <property name="accessible-name">Editor Unicode</property>
+                <property name="accessible-description">Campo de texto para probar EditableText y el portapapeles UTF-8.</property>
+              </object>
+            </child>
+          </object>
+        </child>
+        <child>
+          <object class="GtkCheckButton" id="checkbox">
+            <property name="visible">True</property>
+            <property name="label">Comprobación</property>
+            <property name="active">False</property>
+            <child internal-child="accessible">
+              <object class="AtkObject" id="checkbox_accessible">
+                <property name="accessible-name">Comprobación</property>
+              </object>
+            </child>
+          </object>
+        </child>
+        <child>
+          <object class="GtkLabel" id="password_label">
+            <property name="visible">True</property>
+            <property name="label">Campo protegido: su valor no debe aparecer en el árbol semántico.</property>
+            <property name="wrap">True</property>
+            <property name="xalign">0</property>
+          </object>
+        </child>
+        <child>
+          <object class="GtkEntry" id="password">
+            <property name="visible">True</property>
+            <property name="visibility">False</property>
+            <property name="text">fixture-protected-2FA-9381</property>
+            <property name="input-purpose">password</property>
+            <child internal-child="accessible">
+              <object class="AtkObject" id="password_accessible">
+                <property name="accessible-name">Contraseña de prueba</property>
+              </object>
+            </child>
+          </object>
+        </child>
+        <child>
+          <object class="GtkButton" id="button">
+            <property name="visible">True</property>
+            <property name="label">Botón de prueba</property>
+            <child internal-child="accessible">
+              <object class="AtkObject" id="button_accessible">
+                <property name="accessible-name">Botón de prueba</property>
+                <property name="accessible-description">Publica una acción click sin modificar datos externos.</property>
+              </object>
+            </child>
+          </object>
+        </child>
+      </object>
+    </child>
+  </object>
+</interface>
