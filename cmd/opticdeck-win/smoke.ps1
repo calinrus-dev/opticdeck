@@ -6,24 +6,32 @@ Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 
 if ($Fixture) {
-    Add-Type -AssemblyName System.Windows.Forms, System.Drawing
-    $form = [Windows.Forms.Form]::new()
-    $form.Text = 'OpticDeck smoke fixture'
-    $form.ClientSize = [Drawing.Size]::new(290, 100)
+    Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase
+    $window = [Windows.Window]::new()
+    $window.Title = 'OpticDeck smoke fixture'
+    $window.Width = 340
+    $window.Height = 155
+    $window.Topmost = $true
+    $window.WindowStartupLocation = 'CenterScreen'
+    $layout = [Windows.Controls.StackPanel]::new()
+    $layout.Margin = [Windows.Thickness]::new(14)
 
-    $button = [Windows.Forms.Button]::new()
-    $button.Text = 'Run smoke test'
-    $button.Bounds = [Drawing.Rectangle]::new(14, 14, 140, 28)
-    $button.Add_Click({ $form.Text = 'OpticDeck smoke invoked' })
-    $form.Controls.Add($button)
+    # WPF exposes the native Invoke and password semantics through UI Automation peers.
+    $button = [Windows.Controls.Button]::new()
+    $button.Content = 'Run smoke test'
+    $button.Height = 28
+    [Windows.Automation.AutomationProperties]::SetAutomationId($button, 'OpticDeckSmokeButton')
+    $button.Add_Click({ $window.Title = 'OpticDeck smoke invoked' })
+    [void] $layout.Children.Add($button)
 
-    $password = [Windows.Forms.TextBox]::new()
-    $password.UseSystemPasswordChar = $true
-    $password.Text = 'opticdeck-fixture-masked-text'
-    $password.Bounds = [Drawing.Rectangle]::new(14, 55, 220, 24)
-    $form.Controls.Add($password)
-    try { [Windows.Forms.Application]::Run($form) }
-    finally { $form.Dispose() }
+    $password = [Windows.Controls.PasswordBox]::new()
+    $password.Password = 'opticdeck-fixture-masked-text'
+    $password.Height = 24
+    $password.Margin = [Windows.Thickness]::new(0, 10, 0, 0)
+    [Windows.Automation.AutomationProperties]::SetName($password, 'OpticDeck smoke password label')
+    [void] $layout.Children.Add($password)
+    $window.Content = $layout
+    [void] $window.ShowDialog()
     return
 }
 
@@ -48,13 +56,22 @@ try {
     $limited = $limitedJson | ConvertFrom-Json
     if (!$limited.truncated -or @($limited.nodes).Count -ne 1) { throw 'The node limit was not respected.' }
 
-    $json = & $engine -NoProfile -NonInteractive -MTA -File $helper -ProcessId $fixtureProcess.Id
-    if ($LASTEXITCODE -ne 0) { throw 'Inspection failed.' }
-    $inspection = $json | ConvertFrom-Json
-    $button = @($inspection.nodes | Where-Object { $_.name -ceq 'Run smoke test' -and $_.can_invoke })
-    if ($button.Count -ne 1) { throw 'The fixture button was not discoverable and invokable.' }
+    $deadline = [DateTime]::UtcNow.AddSeconds(9)
+    do {
+        $json = & $engine -NoProfile -NonInteractive -MTA -File $helper -ProcessId $fixtureProcess.Id
+        if ($LASTEXITCODE -ne 0) { throw 'Inspection failed.' }
+        $inspection = $json | ConvertFrom-Json
+        $button = @($inspection.nodes | Where-Object { $_.automation_id -ceq 'OpticDeckSmokeButton' })
+        if ($button.Count -eq 1 -and $button[0].can_invoke) { break }
+        Start-Sleep -Milliseconds 150
+    } while ([DateTime]::UtcNow -lt $deadline)
+    if ($button.Count -ne 1 -or !$button[0].can_invoke -or $button[0].name -cne 'Run smoke test') {
+        Write-Host "Synthetic fixture inspection: $json"
+        throw 'The fixture button was not discoverable and invokable.'
+    }
     $protected = @($inspection.nodes | Where-Object { $_.protected })
-    if ($protected.Count -ne 1 -or $json -match 'opticdeck-fixture-masked-text') {
+    if ($protected.Count -ne 1 -or $json -match 'opticdeck-fixture-masked-text|OpticDeck smoke password label') {
+        Write-Host "Synthetic fixture inspection: $json"
         throw 'The fixture password control was not redacted.'
     }
     $result = & $engine -NoProfile -NonInteractive -MTA -File $helper -Action Invoke -ProcessId $fixtureProcess.Id `

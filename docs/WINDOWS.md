@@ -57,8 +57,8 @@ and [runtime ID lifetime](https://learn.microsoft.com/dotnet/api/system.windows.
 
 ## Native smoke test
 
-Run this on an interactive Windows desktop. The test opens a small Windows
-Forms fixture, checks the scan cap and password masking, and invokes the
+Run this on an interactive Windows desktop. The test opens a small WPF
+fixture, checks the scan cap and password masking, and invokes the
 fixture's test button.
 
 ```powershell

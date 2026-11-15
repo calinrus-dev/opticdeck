@@ -117,8 +117,9 @@ try {
                 $row.name = Limit-Text $info.Name
                 $row.automation_id = Limit-Text $info.AutomationId
                 if ($row.enabled -and $row.visible -and $item.level -gt 0 -and $id) {
-                    $row.can_invoke = [bool]$element.GetCurrentPropertyValue(
-                        [System.Windows.Automation.AutomationElement]::IsInvokePatternAvailableProperty)
+                    $candidatePattern = $null
+                    $row.can_invoke = $element.TryGetCurrentPattern(
+                        [System.Windows.Automation.InvokePattern]::Pattern, [ref]$candidatePattern)
                 }
             }
             $rows.Add($row)
