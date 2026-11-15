@@ -65,5 +65,6 @@ fixture's test button.
 powershell.exe -NoProfile -NonInteractive -MTA -File .\cmd\opticdeck-win\smoke.ps1
 ```
 
-The scripts were parsed on Linux. Native Windows behavior needs a successful
-run of the smoke test on Windows.
+The Windows smoke test passed in GitHub Actions. It covers the WPF fixture
+and the native Invoke pattern. App support depends on the controls exposed
+by each app's accessibility provider.

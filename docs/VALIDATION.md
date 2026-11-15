@@ -13,6 +13,10 @@ The live Chromium test also passed for the Linux virtual session. Its GTK
 fixture yielded 2,463 bytes for the full tree and 505 bytes in compact mode.
 The size difference depends on the app. This test measured JSON bytes.
 
+The Windows GitHub Actions runner passed the WPF companion smoke test. It
+verified scoped inspection, the scan cap, password redaction, and invocation
+of a real UI Automation button.
+
 ## SemaDesk 0.1.0
 
 Validated locally on CachyOS (x86-64) with Go 1.27.4, TigerVNC 1.16.2,
