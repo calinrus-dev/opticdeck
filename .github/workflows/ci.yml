@@ -9,6 +9,15 @@ permissions:
   contents: read
 
 jobs:
+  windows-companion:
+    runs-on: windows-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run native Windows UI Automation smoke test
+        shell: powershell -NoProfile -NonInteractive -MTA -File {0}
+        run: ./cmd/opticdeck-win/smoke.ps1
+
   linux:
     runs-on: ubuntu-24.04
     timeout-minutes: 15

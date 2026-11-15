@@ -2,7 +2,7 @@
 
 ## Trust model
 
-SemaDesk gives apps a separate X11 display, D-Bus session bus, and clipboard.
+OpticDeck gives apps a separate X11 display, D-Bus session bus, and clipboard.
 Apps run as your Linux user and retain that user's file, process, and network
 permissions. The temporary home and XDG directories prevent accidental reuse
 of host app profiles and sockets. Use a separate OS user, container, or VM
@@ -25,6 +25,14 @@ An observer can see the desktop canvas. Password fields suppress their values
 in the semantic tree, but the screen may still show other sensitive content
 during takeover. Restrict viewer access when handling sensitive data.
 
+Host view uses the Wayland desktop's permission dialog and a separate local
+session. It shares the selected monitor's pixels, which can contain private
+content. Keyboard and pointer input require `--allow-input`, a separate
+temporary browser credential and desktop approval. Only one controlling
+connection can hold input at a time. The host viewer has no application,
+semantic action or clipboard routes. Close the foreground command or stop
+the share from your desktop to end the capture.
+
 ## Properties to preserve
 
 - Keep graphical input, accessibility queries, and clipboard operations inside
@@ -46,7 +54,7 @@ change tasks.
 ## Report a vulnerability
 
 Use **Security → Advisories → Report a vulnerability** if private reporting
-is available on the [GitHub repository](https://github.com/calinrus-dev/semadesk).
+is available on the [GitHub repository](https://github.com/calinrus-dev/opticdeck).
 Otherwise, contact the maintainer through a verified private channel. Share the
 affected version or commit, OS, required conditions, impact, and enough detail
 to investigate. Replace personal data and credentials with synthetic values

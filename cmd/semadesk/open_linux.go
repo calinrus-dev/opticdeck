@@ -20,7 +20,7 @@ func openViewer(args []string) error {
 	}
 	opener, err := exec.LookPath("xdg-open")
 	if err != nil {
-		return errors.New("xdg-open is required to open the viewer; install xdg-utils or use semadesk start")
+		return errors.New("xdg-open is required to open the viewer; install xdg-utils or use opticdeck start")
 	}
 	s, err := readState(*dir)
 	if err == nil {

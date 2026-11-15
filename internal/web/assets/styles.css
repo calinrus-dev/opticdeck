@@ -21,6 +21,11 @@ main { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1
 #desktop-panel { min-width: 0; min-height: 0; display: flex; flex-direction: column; padding: 16px; }
 .desktop-toolbar { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 5px 12px; padding: 0 1px 12px; color: #a7b7cc; font-size: 12px; }
 #mode.manual { color: #ffca8f; }
+.latest-action { min-width: 0; display: flex; align-items: baseline; gap: 10px; margin-bottom: 10px; padding: 7px 10px; border: 1px solid #315848; border-radius: 6px; background: #172c27; color: #c0f6e3; font-size: 12px; }
+.latest-action[hidden] { display: none; }
+.latest-action.failed { border-color: #825845; background: #302321; color: #ffd2ae; }
+.latest-caption { flex: none; font-size: 11px; font-weight: 650; }
+#latest-action-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #viewport { flex: 1; min-height: 0; min-width: 0; overflow: auto; display: grid; place-items: center; background: #080d15; border: 1px solid #29364b; border-radius: 8px; }
 #scaled-frame { position: relative; width: 0; height: 0; flex: none; }
 #stage { position: absolute; inset: 0 auto auto 0; transform-origin: left top; width: 1280px; height: 800px; background: #111; overflow: hidden; }
@@ -37,17 +42,26 @@ main { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1
 #semantic-overlay.show-hitboxes .semantic-node { outline: 1px solid #5af5c066; outline-offset: -1px; background: #53d1ad0b; }
 #semantic-overlay.show-hitboxes .semantic-node[data-vision-fallback="true"] { outline: 2px dashed #ffbe72aa; outline-offset: -2px; background: #ffb35e0b; }
 #semantic-overlay .semantic-node:focus-visible { outline: 3px solid #b9ffe8; outline-offset: -3px; box-shadow: inset 0 0 0 5px #102c26; }
-#semantic-overlay .semantic-node.action-flash { outline: 3px solid #b9ffe8 !important; outline-offset: -3px; background: #67e7bd32 !important; }
+#semantic-overlay .semantic-node.action-flash, #semantic-overlay .semantic-node.action-failed {
+  outline: var(--action-ring, 3px) solid #9dffd7 !important;
+  outline-offset: calc(-1 * var(--action-ring, 3px));
+  box-shadow: inset 0 0 0 calc(2 * var(--action-ring, 3px)) #12392d;
+  background: #67e7bd37 !important;
+}
+#semantic-overlay .semantic-node.action-failed { outline-color: #ffc28e !important; box-shadow: inset 0 0 0 calc(2 * var(--action-ring, 3px)) #582f22; background: #ffc28e31 !important; }
 #semantic-overlay .semantic-node[aria-disabled="true"] { pointer-events: none; }
 #desktop-notice { font-size: 11px; color: #8d9db2; margin: 11px 0 0; line-height: 1.5; }
 aside { border-left: 1px solid #273346; background: #111a27; padding: 19px 18px; min-height: 0; overflow: auto; display: flex; flex-direction: column; }
 h1 { font-size: 15px; margin: 0 0 9px; }
 h2 { font-size: 13px; margin: 0 0 10px; }
 .help { font-size: 11px; line-height: 1.6; color: #93a4ba; margin: 0 0 12px; }
-#action-log { list-style: none; padding: 0; margin: 0; flex: 1; min-height: 100px; overflow: auto; }
-#action-log li { margin: 0 0 9px; border-left: 2px solid #4e756c; padding: 6px 0 6px 9px; font-size: 12px; color: #cdd8e7; overflow-wrap: anywhere; }
-#action-log li.failed { border-color: #c57a65; color: #f7b5a2; }
-#action-log time { display: block; font-size: 10px; color: #879ab3; margin-bottom: 4px; }
+.activity-empty { margin: 3px 0 0; padding: 11px; border: 1px dashed #384a60; border-radius: 6px; color: #a7b7cc; font-size: 12px; }
+#action-log { list-style: none; padding: 3px 2px 0 0; margin: 0; flex: 1; min-height: 100px; overflow: auto; scrollbar-width: thin; scrollbar-color: #4b5f74 transparent; }
+#action-log li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 3px 8px; margin: 0 0 7px; border: 1px solid #273b49; border-left: 3px solid #5a927e; border-radius: 6px; padding: 8px 9px; background: #14222f; font-size: 12px; overflow-wrap: anywhere; }
+#action-log li:last-child { border-left-color: #91e2c3; }
+#action-log li.failed { border-left-color: #f1aa86; color: #ffc8ad; }
+.activity-target { grid-column: 1 / -1; color: #a7b7cc; }
+#action-log time { color: #a7b7cc; font-size: 10px; font-variant-numeric: tabular-nums; align-self: baseline; white-space: nowrap; }
 .clipboard-panel { padding-top: 18px; border-top: 1px solid #273346; margin-top: 16px; }
 .clipboard-panel label { display: block; font-size: 11px; margin-bottom: 7px; color: #a6b6ca; }
 textarea#clipboard { display: block; width: 100%; color: #d9e6f4; background: #0b121d; border: 1px solid #344762; border-radius: 5px; padding: 8px; resize: vertical; font: 12px/1.5 monospace; }

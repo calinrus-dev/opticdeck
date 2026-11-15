@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Host view · OpticDeck</title>
+  <link rel="stylesheet" href="/host.css">
+  <script type="module" src="/host.js"></script>
+</head>
+<body>
+  <main>
+    <header>
+      <div><span class="brand">OpticDeck</span><h1>Host view</h1></div>
+      <span class="mode" id="mode">Read only</span>
+    </header>
+    <div id="display" aria-label="Shared display"></div>
+    <section aria-label="Sharing controls">
+      <p id="status" role="status">Choose a monitor in the system dialog after selecting Share display.</p>
+      <p id="permission-note">The system may say remote control. Keyboard, mouse and clipboard are disabled in this viewer.</p>
+      <p id="control-note" hidden>Keyboard input goes to the focused application. If the pointer lands in the wrong place, restart with the selected monitor’s Wayland scale, for example <code>--monitor-scale 1.5</code> for 150%.</p>
+      <div class="actions">
+        <button id="share" type="button">Share display</button>
+        <button id="control" type="button" hidden>Share with input</button>
+        <button id="stop" type="button" disabled>Stop viewing</button>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

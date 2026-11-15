@@ -21,9 +21,9 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/gorilla/websocket"
 	"github.com/calinrus-dev/semadesk/internal/model"
 	"github.com/calinrus-dev/semadesk/internal/web"
+	"github.com/gorilla/websocket"
 )
 
 const maxMessage = 1 << 20
@@ -59,26 +59,30 @@ func (c *client) close() { c.once.Do(func() { close(c.done); _ = c.conn.Close() 
 // Server owns all control arbitration. gate serializes both semantic actions
 // and manual RFB input with takeover transitions; mu protects snapshots/clients.
 type Server struct {
-	refreshMu   sync.Mutex
-	refreshes   chan struct{}
-	manualToken string
-	cfg         Config
-	engine      Engine
-	desktop     Desktop
-	launch      func([]string) (int, error)
-	stop        func()
-	http        *http.Server
-	ctx         context.Context
-	cancel      context.CancelFunc
-	gate        sync.Mutex
-	mu          sync.Mutex
-	clients     map[string]*client
-	rfbs        map[*websocket.Conn]net.Conn
-	control     model.Control
-	nodes       map[string]model.Node
-	snapshot    model.Snapshot
-	host        string
-	lastError   string
+	refreshMu        sync.Mutex
+	refreshes        chan struct{}
+	manualToken      string
+	cfg              Config
+	engine           Engine
+	desktop          Desktop
+	launch           func([]string) (int, error)
+	stop             func()
+	http             *http.Server
+	ctx              context.Context
+	cancel           context.CancelFunc
+	gate             sync.Mutex
+	mu               sync.Mutex
+	clients          map[string]*client
+	rfbs             map[*websocket.Conn]net.Conn
+	control          model.Control
+	nodes            map[string]model.Node
+	snapshot         model.Snapshot
+	host             string
+	lastError        string
+	hostView         bool
+	hostInputToken   string
+	hostMonitorScale float64
+	hostController   *websocket.Conn
 }
 
 type diff struct {
@@ -131,8 +135,10 @@ func (s *Server) Serve(listener net.Listener) error {
 	s.mu.Lock()
 	s.host = listener.Addr().String()
 	s.mu.Unlock()
-	s.refresh()
-	go s.watch()
+	if !s.hostView {
+		s.refresh()
+		go s.watch()
+	}
 	err := s.http.Serve(listener)
 	if errors.Is(err, http.ErrServerClosed) {
 		return nil
@@ -166,6 +172,10 @@ func (s *Server) handler() http.Handler {
 	return s.authenticate(mux)
 }
 func (s *Server) authenticate(next http.Handler) http.Handler {
+	cookieName := "semadesk_session"
+	if s.hostView {
+		cookieName = "opticdeck_host_session"
+	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "DENY")
@@ -195,7 +205,7 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 			token = r.URL.Query().Get("token")
 		}
 		if token == "" {
-			if c, e := r.Cookie("semadesk_session"); e == nil {
+			if c, e := r.Cookie(cookieName); e == nil {
 				token = c.Value
 			}
 		}
@@ -204,7 +214,7 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 			return
 		}
 		if s.cfg.Token != "" && r.URL.Query().Get("token") != "" && r.URL.Path == "/" {
-			http.SetCookie(w, &http.Cookie{Name: "semadesk_session", Value: s.cfg.Token, Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode})
+			http.SetCookie(w, &http.Cookie{Name: cookieName, Value: s.cfg.Token, Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode})
 		}
 		next.ServeHTTP(w, r)
 	})

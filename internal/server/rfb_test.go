@@ -181,6 +181,9 @@ func TestRFBProxyEnforcesPrivateManualLease(t *testing.T) {
 	manual, controlled := dialRFB("client-owner", lease)
 	_ = manual.WriteMessage(websocket.BinaryMessage, key)
 	expect(controlled, key)
+	pointer := []byte{5, 128, 0x02, 0x40, 0x01, 0xe0, 1}
+	_ = manual.WriteMessage(websocket.BinaryMessage, pointer)
+	expect(controlled, pointer)
 	// Even a manual client cannot send the classic Latin-1 clipboard: clipboard
 	// payloads use only the bounded UTF-8 API, avoiding leaks to RFB observers.
 	cut := []byte{6, 0, 0, 0, 0, 0, 0, 1, 'x'}

@@ -116,7 +116,11 @@ function installMock(snapshot) {
     assert.equal(await page.getByText('No actions yet.', { exact: true }).isVisible(), true);
     await page.evaluate(() => __ws.emit({ type: 'log', action: 'click', node: 'button', ok: true }));
     assert.equal(await page.getByText('No actions yet.', { exact: true }).isVisible(), false);
-    assert.equal(await page.getByRole('list', { name: 'Action log' }).getByText('click · button', { exact: true }).isVisible(), true);
+    const activity = page.getByRole('list', { name: 'Action log' });
+    assert.equal(await activity.getByText('Click', { exact: true }).isVisible(), true);
+    assert.equal(await activity.getByText('Guardar', { exact: true }).isVisible(), true);
+    assert.equal(await page.locator('#latest-action-text').textContent(), 'Click · Guardar');
+    assert.equal(await page.locator('#native-button').evaluate(element => element.classList.contains('action-flash')), true);
     assert.equal(await page.getByRole('textbox', { name: 'Notas', exact: true }).evaluate(element => element.localName), 'textarea');
     assert.equal(await page.locator('#native-memo').getAttribute('data-native-focused'), 'true');
     assert.equal(await page.locator('#native-memo').getAttribute('data-states'), 'editable,multiline,focused');
@@ -168,6 +172,14 @@ function installMock(snapshot) {
     assert.equal(await page.locator('#semantic-overlay').getAttribute('data-revision'), '3');
     assert.equal(await page.locator('#native-input').getAttribute('type'), 'password');
     assert.equal(await page.locator('#native-input').inputValue(), '');
+    await page.evaluate(() => __ws.emit({
+      type: 'log', action: 'set_text', node: 'input', ok: false,
+      text: 'private-typed-text', key: 'private-key', clipboard: 'private-clipboard', error: 'private-error',
+    }));
+    assert.equal(await page.locator('#latest-action-text').textContent(), 'Edit text failed · Protected field');
+    assert.equal(await activity.getByText('Protected field', { exact: true }).isVisible(), true);
+    assert.doesNotMatch(await activity.innerText(), /Nombre|private-/);
+    assert.equal(await page.locator('#native-input').evaluate(element => element.classList.contains('action-failed')), true);
     assert.equal(await page.locator('#native-memo').getAttribute('data-native-focused'), 'false');
     assert.equal(await page.locator('#native-memo').evaluate(element => element.localName), 'textarea');
     await page.evaluate(() => __ws.emit({ type: 'diff', base: 90, revision: 91, upsert: [], remove: [] }));
@@ -186,6 +198,7 @@ function installMock(snapshot) {
     const rfbURL = await page.evaluate(() => __sockets.filter(socket => new URL(socket.url).pathname === '/rfb').at(-1).url);
     assert.equal(new URL(rfbURL).searchParams.get('lease'), 'test-private-lease');
     await page.setViewportSize({ width: 360, height: 660 });
+    assert.equal(await page.locator('#latest-action').isVisible(), true, 'narrow view keeps the latest action visible');
     assert.equal(await page.getByRole('region', { name: 'Session clipboard' }).isVisible(), true, 'narrow view keeps the clipboard available');
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth), 360, 'narrow view has no horizontal page scroll');
     await page.getByRole('button', { name: 'Return control to agent', exact: true }).click();

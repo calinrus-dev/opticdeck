@@ -14,7 +14,7 @@
 <child><object class="GtkMenuItem" id="item12"><property name="visible">True</property><property name="label">Opción popup 12</property></object></child>
 <child><object class="GtkMenuItem" id="item13"><property name="visible">True</property><property name="label">Opción popup 13</property></object></child>
 <child><object class="GtkMenuItem" id="item14"><property name="visible">True</property><property name="label">Opción popup 14</property></object></child></object>
-<object class="GtkWindow" id="popup_fixture"><property name="title">SemaDesk popup fixture</property><property name="default-width">280</property><property name="default-height">100</property><property name="window-position">center</property>
+<object class="GtkWindow" id="popup_fixture"><property name="title">OpticDeck popup fixture</property><property name="default-width">280</property><property name="default-height">100</property><property name="window-position">center</property>
 <child><object class="GtkBox" id="content"><property name="visible">True</property><property name="margin">12</property>
 <child><object class="GtkMenuButton" id="menu_button"><property name="visible">True</property><property name="label">Abrir menú fuera</property><property name="popup">popup</property></object></child>
 </object></child></object></interface>

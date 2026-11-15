@@ -1,6 +1,6 @@
 GO ?= go
 NODE ?= node
-BIN := bin/semadesk
+BIN := bin/opticdeck
 PREFIX ?= $(HOME)/.local
 BINDIR ?= $(PREFIX)/bin
 DATADIR ?= $(PREFIX)/share
@@ -12,11 +12,13 @@ all: build
 build:
 	mkdir -p bin
 	CGO_ENABLED=0 $(GO) build -buildvcs=false -trimpath -o $(BIN) ./cmd/semadesk
+	ln -sfn opticdeck bin/semadesk
 
 install: build
-	install -Dm755 $(BIN) "$(DESTDIR)$(BINDIR)/semadesk"
-	install -Dm644 packaging/semadesk.desktop "$(DESTDIR)$(DATADIR)/applications/semadesk.desktop"
-	install -Dm644 packaging/semadesk.svg "$(DESTDIR)$(DATADIR)/icons/hicolor/scalable/apps/semadesk.svg"
+	install -Dm755 $(BIN) "$(DESTDIR)$(BINDIR)/opticdeck"
+	ln -sfn opticdeck "$(DESTDIR)$(BINDIR)/semadesk"
+	install -Dm644 packaging/semadesk.desktop "$(DESTDIR)$(DATADIR)/applications/opticdeck.desktop"
+	install -Dm644 packaging/semadesk.svg "$(DESTDIR)$(DATADIR)/icons/hicolor/scalable/apps/opticdeck.svg"
 
 test:
 	$(GO) test ./...

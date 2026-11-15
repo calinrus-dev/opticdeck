@@ -97,6 +97,11 @@ func readRFBMessage(r io.Reader) (message []byte, control bool, err error) {
 			return nil, false, errors.New("too many RFB encodings")
 		}
 		extra = count * 4
+	case 5:
+		// ExtendedMouseButtons adds a second button mask byte after x and y.
+		if message[1]&0x80 != 0 {
+			extra = 1
+		}
 	case 6:
 		length := binary.BigEndian.Uint32(message[4:8])
 		if length > maxMessage {
@@ -167,6 +172,11 @@ func (s *Server) handleRFB(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "client must be 8..128 URL-safe characters")
 		return
 	}
+	hostInput := s.hostView && lease != ""
+	if hostInput && (s.hostInputToken == "" || subtle.ConstantTimeCompare([]byte(lease), []byte(s.hostInputToken)) != 1) {
+		writeError(w, http.StatusForbidden, "host input permission required")
+		return
+	}
 	dialer := net.Dialer{Timeout: 3 * time.Second}
 	backend, err := dialer.DialContext(r.Context(), "unix", s.cfg.RFBSocket)
 	if err != nil {
@@ -187,6 +197,17 @@ func (s *Server) handleRFB(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.mu.Lock()
+	if hostInput {
+		if s.hostController != nil {
+			s.mu.Unlock()
+			s.gate.Unlock()
+			_ = ws.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.ClosePolicyViolation, "another viewer has host input"), time.Now().Add(time.Second))
+			_ = ws.Close()
+			_ = backend.Close()
+			return
+		}
+		s.hostController = ws
+	}
 	s.rfbs[ws] = backend
 	s.mu.Unlock()
 	s.gate.Unlock()
@@ -197,6 +218,9 @@ func (s *Server) handleRFB(w http.ResponseWriter, r *http.Request) {
 		_ = ws.Close()
 		s.mu.Lock()
 		delete(s.rfbs, ws)
+		if s.hostController == ws {
+			s.hostController = nil
+		}
 		s.mu.Unlock()
 	}()
 	ws.SetReadLimit(maxMessage + 8192)
@@ -255,10 +279,21 @@ func (s *Server) handleRFB(w http.ResponseWriter, r *http.Request) {
 		s.gate.Lock()
 		s.mu.Lock()
 		allowed := s.control.Paused && s.control.Owner == id && s.clients[id] != nil && s.manualToken != "" && subtle.ConstantTimeCompare([]byte(lease), []byte(s.manualToken)) == 1
+		if s.hostView {
+			allowed = s.hostController == ws && (msg[0] == 4 || msg[0] == 5 || msg[0] == 255)
+		}
 		s.mu.Unlock()
 		if msg[0] == 6 || (control && !allowed) {
 			s.gate.Unlock()
 			continue
+		}
+		if s.hostView && msg[0] == 5 && s.hostMonitorScale > 1 {
+			// TigerVNC's Wayland portal path forwards RFB framebuffer pixels
+			// unchanged to a portal that expects logical monitor coordinates.
+			for _, offset := range []int{2, 4} {
+				pixel := binary.BigEndian.Uint16(msg[offset:])
+				binary.BigEndian.PutUint16(msg[offset:], uint16(float64(pixel)/s.hostMonitorScale))
+			}
 		}
 		_ = backend.SetWriteDeadline(time.Now().Add(3 * time.Second))
 		_, err = backend.Write(msg)

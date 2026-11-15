@@ -1,5 +1,18 @@
 # Validation
 
+## OpticDeck 0.2.0
+
+On CachyOS with KDE Wayland and TigerVNC 1.16.2, the Codex built-in browser
+displayed a shared 3840 × 2160 monitor after desktop approval. Keyboard and
+pointer input reached native applications. The monitor was scaled to 300%.
+Live testing compensated for that scale while debugging. The shipped
+`--monitor-scale` option applies the same conversion in the RFB proxy. Go tests
+cover both pointer formats and ensure an observer cannot send input.
+
+The live Chromium test also passed for the Linux virtual session. Its GTK
+fixture yielded 2,463 bytes for the full tree and 505 bytes in compact mode.
+The size difference depends on the app. This test measured JSON bytes.
+
 ## SemaDesk 0.1.0
 
 Validated locally on CachyOS (x86-64) with Go 1.27.4, TigerVNC 1.16.2,

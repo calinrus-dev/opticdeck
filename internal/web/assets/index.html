@@ -4,12 +4,12 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="referrer" content="no-referrer">
-  <title>SemaDesk · Virtual Linux desktop</title>
+  <title>OpticDeck · Virtual Linux desktop</title>
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
   <header>
-    <div class="brand"><span class="mark" aria-hidden="true">S</span><div><strong>SemaDesk</strong><span class="caption">Virtual Linux desktop</span></div></div>
+    <div class="brand"><span class="mark" aria-hidden="true">O</span><div><strong>OpticDeck</strong><span class="caption">Virtual Linux desktop</span></div></div>
     <span id="connection" class="status" role="status">Connecting…</span>
     <label class="debug-toggle"><input id="hitboxes" type="checkbox"> Show hitboxes</label>
     <button id="takeover" type="button" aria-describedby="mode" disabled>Take control</button>
@@ -17,6 +17,10 @@
   <main>
     <section id="desktop-panel" aria-label="Virtual desktop">
       <div class="desktop-toolbar"><span id="mode" role="status">Waiting for session</span><span id="metrics">Waiting for snapshot</span></div>
+      <div id="latest-action" class="latest-action" hidden>
+        <span class="latest-caption">Latest action</span>
+        <span id="latest-action-text"></span>
+      </div>
       <div id="viewport">
         <div id="scaled-frame">
           <div id="stage">
@@ -30,8 +34,7 @@
     </section>
     <aside aria-label="Session details">
       <h1>Activity</h1>
-      <p class="help">The log shows action names and omits typed text, keys, and clipboard contents.</p>
-      <p id="activity-empty" class="help">No actions yet.</p>
+      <p id="activity-empty" class="activity-empty">No actions yet.</p>
       <ol id="action-log" aria-label="Action log" aria-live="polite" aria-relevant="additions"></ol>
       <section class="clipboard-panel" aria-labelledby="clipboard-heading">
         <h2 id="clipboard-heading">Session clipboard</h2>

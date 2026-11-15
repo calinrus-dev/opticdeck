@@ -6,6 +6,7 @@ const stage = $('stage');
 const viewport = $('viewport');
 const frame = $('scaled-frame');
 const actionLog = $('action-log');
+const latestAction = $('latest-action');
 const elements = new Map();
 const nodes = new Map();
 const pending = new Map();
@@ -14,6 +15,7 @@ const urlToken = pageURL.searchParams.get('token');
 let token = '';
 let client;
 try {
+  // Keep existing session keys so tabs that already hid the token can reload.
   if (urlToken !== null) sessionStorage.setItem('semadesk.token', urlToken);
   token = urlToken ?? sessionStorage.getItem('semadesk.token') ?? '';
   client = sessionStorage.getItem('semadesk.client');
@@ -49,6 +51,8 @@ let textWrites = new Map();
 let clickTimers = new Map();
 let dirty = new Map();
 let composing = new Set();
+let highlighted;
+let highlightTimer;
 
 function endpoint(path) {
   const url = new URL(path, location.href);
@@ -91,7 +95,7 @@ function clearError() {
 }
 
 function send(message) {
-  if (!online()) throw new Error('Disconnected from SemaDesk');
+  if (!online()) throw new Error('Disconnected from OpticDeck');
   socket.send(JSON.stringify(message));
 }
 
@@ -100,7 +104,7 @@ function request(message) {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       pending.delete(id);
-      reject(new Error('SemaDesk did not confirm the operation in time'));
+      reject(new Error('OpticDeck did not confirm the operation in time'));
     }, 15000);
     pending.set(id, { resolve, reject, timer });
     try {
@@ -116,7 +120,7 @@ function request(message) {
 function rejectPending() {
   for (const entry of pending.values()) {
     clearTimeout(entry.timer);
-    entry.reject(new Error('The connection closed before SemaDesk confirmed the operation'));
+    entry.reject(new Error('The connection closed before OpticDeck confirmed the operation'));
   }
   pending.clear();
 }
@@ -124,11 +128,7 @@ function rejectPending() {
 function perform(node, action, extra = {}) {
   if (!haveSnapshot || syncPending) return Promise.reject(new Error('The desktop controls are syncing'));
   if (control.paused) return Promise.reject(new Error('Manual control paused the agent'));
-  const element = elements.get(node);
-  if (element) {
-    element.classList.add('action-flash');
-    setTimeout(() => element.classList.remove('action-flash'), 450);
-  }
+  highlightAction(node);
   return request({ type: 'action', node, action, ...extra });
 }
 
@@ -137,12 +137,13 @@ function run(promise) {
 }
 
 function scale() {
-  stage.style.width = `${width}px`;
-  stage.style.height = `${height}px`;
   const availableWidth = Math.max(1, viewport.clientWidth - 2);
   const availableHeight = Math.max(1, viewport.clientHeight - 2);
   const ratio = Math.min(1, availableWidth / width, availableHeight / height);
+  stage.style.width = `${width}px`;
+  stage.style.height = `${height}px`;
   stage.style.transform = `scale(${ratio})`;
+  stage.style.setProperty('--action-ring', `${Math.min(10, 3 / ratio)}px`);
   frame.style.width = `${Math.ceil(width * ratio)}px`;
   frame.style.height = `${Math.ceil(height * ratio)}px`;
 }
@@ -150,11 +151,10 @@ function scale() {
 new ResizeObserver(scale).observe(viewport);
 
 function setDimensions(w, h) {
-  if (Number.isFinite(w) && Number.isFinite(h) && w > 0 && h > 0) {
-    width = w;
-    height = h;
-    scale();
-  }
+  if (!Number.isFinite(w) || !Number.isFinite(h) || w <= 0 || h <= 0 || (w === width && h === height)) return;
+  width = w;
+  height = h;
+  scale();
 }
 
 function normalizeRole(node) {
@@ -380,6 +380,7 @@ function upsert(node) {
 }
 
 function remove(id) {
+  if (highlighted && elements.get(id) === highlighted) clearActionHighlight();
   elements.get(id)?.remove();
   elements.delete(id);
   nodes.delete(id);
@@ -466,27 +467,82 @@ function setControl(next) {
   }
 }
 
+const actionLabels = new Map([
+  ['click', 'Click'], ['double_click', 'Double click'], ['right_click', 'Right click'],
+  ['focus', 'Focus'], ['set_text', 'Edit text'], ['press_key', 'Key press'], ['shortcut', 'Shortcut'],
+]);
+const namedTargetRoles = new Map([
+  ['button', 'Button'], ['checkbox', 'Checkbox'], ['radio', 'Radio button'], ['menuitem', 'Menu item'],
+  ['menuitemcheckbox', 'Menu item'], ['menuitemradio', 'Menu item'], ['tab', 'Tab'],
+  ['link', 'Link'], ['slider', 'Slider'],
+]);
+
+function actionTarget(id) {
+  if (!id) return '';
+  const node = nodes.get(id);
+  if (!node) return 'Control';
+  if ((node.states || []).includes('protected') || String(node.role).includes('password')) return 'Protected field';
+  if (node.vision_fallback) return 'Desktop region';
+  const role = normalizeRole(node);
+  if (isEditable(node, role)) return 'Text field';
+  const fallback = namedTargetRoles.get(role);
+  if (!fallback) return 'Control';
+  // Only use names of controls normally labelled with static UI copy. Native
+  // document titles, editable labels, values and action arguments stay out of the log.
+  const name = String(node.name || '').replace(/\s+/g, ' ').trim();
+  if (!name || (node.value && name.includes(node.value))) return fallback;
+  const characters = Array.from(name);
+  return characters.length > 96 ? `${characters.slice(0, 95).join('')}…` : name;
+}
+
+function clearActionHighlight() {
+  clearTimeout(highlightTimer);
+  highlighted?.classList.remove('action-flash', 'action-failed');
+  highlighted = null;
+}
+
+function highlightAction(id, failed = false) {
+  clearActionHighlight();
+  highlighted = elements.get(id);
+  if (!highlighted) return;
+  highlighted.classList.add(failed ? 'action-failed' : 'action-flash');
+  highlightTimer = setTimeout(clearActionHighlight, 1400);
+}
+
 function addLog(message) {
+  const action = actionLabels.get(message.action) || 'Desktop action';
+  const target = actionTarget(message.node);
+  const failed = message.ok === false;
+  const label = failed ? `${action} failed` : action;
+  latestAction.hidden = false;
+  latestAction.classList.toggle('failed', failed);
+  $('latest-action-text').textContent = target ? `${label} · ${target}` : label;
+
   const li = document.createElement('li');
-  if (message.ok === false) li.className = 'failed';
+  if (failed) li.className = 'failed';
+  if (actionLabels.has(message.action)) li.dataset.action = message.action;
+  const summary = document.createElement('strong');
+  summary.textContent = label;
+  li.appendChild(summary);
   const time = document.createElement('time');
   const date = message.time ? new Date(message.time) : new Date();
-  time.textContent = Number.isNaN(date.getTime()) ? '' : date.toLocaleTimeString();
-  const description = document.createElement('span');
-  // Never render text/key payloads. A node ID supplies correlation without
-  // accidentally publishing a field name that may contain sensitive text.
-  description.textContent = `${message.action || 'Action'}${message.node ? ` · ${message.node}` : ''}${message.ok === false ? ' · failed' : ''}`;
+  if (!Number.isNaN(date.getTime())) {
+    time.dateTime = date.toISOString();
+    time.textContent = date.toLocaleTimeString();
+    li.appendChild(time);
+  }
+  if (target) {
+    const description = document.createElement('span');
+    description.className = 'activity-target';
+    description.textContent = target;
+    li.appendChild(description);
+  }
   const atEnd = actionLog.scrollHeight - actionLog.scrollTop - actionLog.clientHeight < 12;
-  li.append(time, description);
   $('activity-empty').hidden = true;
   actionLog.appendChild(li);
   while (actionLog.children.length > 200) actionLog.firstChild.remove();
   if (atEnd) actionLog.scrollTop = actionLog.scrollHeight;
-  const element = elements.get(message.node);
-  if (element) {
-    element.classList.add('action-flash');
-    setTimeout(() => element.classList.remove('action-flash'), 450);
-  }
+  highlightAction(message.node, failed);
 }
 
 function connectRFB(delay = 0) {
@@ -538,7 +594,7 @@ function connectRFB(delay = 0) {
 function connect() {
   clearTimeout(reconnectTimer);
   if (stopped) return;
-  setStatus('Connecting to SemaDesk…', 'syncing');
+  setStatus('Connecting to OpticDeck…', 'syncing');
   socket = new WebSocket(endpoint('/ws'));
   socket.addEventListener('open', () => {
     reconnectAttempt = 0;
@@ -570,7 +626,7 @@ function connect() {
           break;
         }
         case 'clipboard': if (isOwner()) $('clipboard').value = message.text || ''; break;
-        case 'error': showError(message.error || message.message || 'SemaDesk reported an error'); break;
+        case 'error': showError(message.error || message.message || 'OpticDeck reported an error'); break;
       }
     } catch (error) {
       showError(`Desktop sync: ${error.message}`);
@@ -582,6 +638,7 @@ function connect() {
     rfbReady = false;
     lease = '';
     overlay.classList.add('disconnected');
+    clearActionHighlight();
     $('takeover').disabled = true;
     $('mode').textContent = 'Waiting for session';
     $('mode').classList.remove('manual');
@@ -602,7 +659,7 @@ function connect() {
     if (event.code === 1008) showError('Session rejected. Reopen the current session URL in a new tab.');
     reconnectTimer = setTimeout(connect, Math.min(15000, 1000 * 2 ** Math.min(4, reconnectAttempt++)));
   });
-  socket.addEventListener('error', () => showError('Could not connect. Check that SemaDesk is running and that you opened the current session URL.'));
+  socket.addEventListener('error', () => showError('Could not connect. Check that OpticDeck is running and that you opened the current session URL.'));
 }
 
 $('hitboxes').addEventListener('change', event => overlay.classList.toggle('show-hitboxes', event.target.checked));

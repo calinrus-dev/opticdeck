@@ -1,4 +1,4 @@
-// SemaDesk controls only the private display created by its supervisor.
+// OpticDeck provides a private virtual desktop and an opt-in Wayland viewer.
 package main
 
 import (
@@ -30,7 +30,7 @@ import (
 	"github.com/calinrus-dev/semadesk/internal/session"
 )
 
-var version = "0.1.0"
+var version = "0.2.0"
 
 type state struct {
 	PID        int       `json:"pid"`
@@ -449,7 +449,7 @@ func serve(args []string) (retErr error) {
 	}
 	ready.Close()
 	ready = nil
-	log.Printf("SemaDesk %s running on %s, display %s", version, st.URL, st.Display)
+	log.Printf("OpticDeck %s running on %s, display %s", version, st.URL, st.Display)
 	select {
 	case <-ctx.Done():
 		return nil
@@ -471,6 +471,14 @@ func clientCommand(command string, args []string) error {
 	dir := fs.String("state-dir", defaultDir(), "private state directory")
 	a := model.Action{}
 	var x, y int
+	compact := false
+	match := ""
+	limit := 20
+	if command == "tree" {
+		fs.BoolVar(&compact, "compact", false, "list only actionable controls and visual fallback regions")
+		fs.StringVar(&match, "match", "", "filter compact results by name or role")
+		fs.IntVar(&limit, "limit", 20, "maximum compact results (1–100)")
+	}
 	if command == "act" {
 		fs.StringVar(&a.Node, "node", "", "semantic node ID")
 		fs.StringVar(&a.Action, "action", "click", "action name")
@@ -484,6 +492,9 @@ func clientCommand(command string, args []string) error {
 	}
 	if command != "launch" && fs.NArg() != 0 {
 		return errors.New("unexpected positional arguments")
+	}
+	if command == "tree" && (limit < 1 || limit > 100 || (!compact && (match != "" || limit != 20))) {
+		return errors.New("--match and --limit 1–100 require --compact")
 	}
 	s, err := readState(*dir)
 	if err != nil {
@@ -525,6 +536,9 @@ func clientCommand(command string, args []string) error {
 	if err != nil {
 		return err
 	}
+	if compact {
+		return writeCompactTree(os.Stdout, b, match, limit)
+	}
 	if command == "status" {
 		var status map[string]any
 		if json.Unmarshal(b, &status) == nil {
@@ -552,13 +566,15 @@ func clientCommand(command string, args []string) error {
 
 func run() error {
 	if len(os.Args) < 2 {
-		return errors.New("usage: semadesk open|start|stop|status|launch|tree|act|version")
+		return errors.New("usage: opticdeck open|start|stop|status|launch|tree|act|host-view|version")
 	}
 	switch os.Args[1] {
 	case "start":
 		return start(os.Args[2:], os.Stdout)
 	case "open":
 		return openViewer(os.Args[2:])
+	case "host-view":
+		return hostView(os.Args[2:])
 	case "_serve":
 		return serve(os.Args[2:])
 	case "_guard":
@@ -572,7 +588,7 @@ func run() error {
 		fmt.Println(version)
 		return nil
 	case "help", "--help", "-h":
-		fmt.Println("semadesk open [--state-dir DIR]\nsemadesk start [--width 1280 --height 800 --port 0 --state-dir DIR --no-token]\nsemadesk status|stop|tree [--state-dir DIR]\nsemadesk launch [--state-dir DIR] -- executable [arguments]\nsemadesk act [--state-dir DIR] --node ID --action ACTION [--text TEXT --key KEY --x N --y N]")
+		fmt.Println("opticdeck open [--state-dir DIR]\nopticdeck start [--width 1280 --height 800 --port 0 --state-dir DIR --no-token]\nopticdeck status|stop [--state-dir DIR]\nopticdeck tree [--state-dir DIR] [--compact [--match TEXT --limit N]]\nopticdeck launch [--state-dir DIR] -- executable [arguments]\nopticdeck act [--state-dir DIR] --node ID --action ACTION [--text TEXT --key KEY --x N --y N]\nopticdeck host-view [--allow-input] [--monitor-scale SCALE]")
 		return nil
 	default:
 		return fmt.Errorf("unknown command %q", os.Args[1])
@@ -581,7 +597,7 @@ func run() error {
 
 func main() {
 	if err := run(); err != nil {
-		fmt.Fprintln(os.Stderr, "semadesk:", err)
+		fmt.Fprintln(os.Stderr, "opticdeck:", err)
 		os.Exit(1)
 	}
 }

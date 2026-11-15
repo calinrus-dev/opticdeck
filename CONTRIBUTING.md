@@ -1,4 +1,4 @@
-# Contributing to SemaDesk
+# Contributing to OpticDeck
 
 For changes to the protocol, input handling, or session lifecycle, read the
 [architecture decision](docs/adr/0001-architecture.md) and the

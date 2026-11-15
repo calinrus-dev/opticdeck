@@ -1,6 +1,6 @@
 # Third-party software
 
-SemaDesk itself is MIT licensed. Source distributions and binary release bundles
+OpticDeck itself is MIT licensed. Source distributions and binary release bundles
 must retain this notice, the root LICENSE, docs/licenses, and noVNC's notices.
 
 | Component | Pinned version | License / original notice |
@@ -19,4 +19,4 @@ is loaded from a CDN at runtime. Go module checksums are in `go.sum`.
 
 Xvnc/TigerVNC, openbox, D-Bus and AT-SPI2 are system dependencies distributed by
 the operating system under their respective licenses; they are not bundled in
-the SemaDesk executable or source archive.
+the OpticDeck executable or source archive.

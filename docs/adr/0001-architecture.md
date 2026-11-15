@@ -4,7 +4,7 @@ Accepted for Linux with TigerVNC and virtual X11.
 
 ## Runtime
 
-SemaDesk uses Go and builds with `CGO_ENABLED=0`. The executable embeds the
+OpticDeck uses Go and builds with `CGO_ENABLED=0`. The executable embeds the
 HTTP server, WebSocket proxy, and browser assets. It uses
 `github.com/godbus/dbus/v5` for D-Bus, `github.com/jezek/xgb` for X11 and XTest,
 and `github.com/gorilla/websocket` for WebSockets. The versions are pinned in
@@ -12,7 +12,7 @@ and `github.com/gorilla/websocket` for WebSockets. The versions are pinned in
 `rust-embed` was also considered. Go kept the implementation of IPC, process
 management, and HTTP in one small dependency set.
 
-TigerVNC, Openbox, and AT-SPI2 are system packages. SemaDesk uses an
+TigerVNC, Openbox, and AT-SPI2 are system packages. OpticDeck uses an
 independent `DISPLAY` and D-Bus session address, sets GTK and Qt to use X11,
 and strips the inherited Wayland display and host accessibility bus settings.
 Temporary home and XDG directories prevent accidental reuse of host app
