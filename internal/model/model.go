@@ -34,6 +34,7 @@ type Action struct {
 	DurationMS     int     `json:"duration_ms,omitempty"`
 	ExpectName     *string `json:"expect_name,omitempty"`
 	ExpectRevision *uint64 `json:"expect_revision,omitempty"`
+	ExpectFrame    string  `json:"expect_frame,omitempty"`
 }
 
 type Control struct {

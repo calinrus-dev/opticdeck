@@ -7,8 +7,12 @@ import (
 
 func launchArguments(toolkit string, argv []string) ([]string, error) {
 	switch toolkit {
-	case "auto", "qt":
-		return argv, nil // Qt's AT-SPI bridge is enabled in the session environment.
+	case "auto":
+		return argv, nil
+	case "qt":
+		// Qt 6.4 can emit its enabled signal before the bridge connects when
+		// the address is explicit. Let Qt discover our private session bus.
+		return append([]string{"env", "-u", "AT_SPI_BUS_ADDRESS", "-u", "ATSPI_BUS_ADDRESS"}, argv...), nil
 	case "electron":
 		for _, arg := range argv[1:] {
 			if arg == "--" {

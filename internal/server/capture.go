@@ -1,6 +1,10 @@
 package server
 
 import (
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/binary"
+	"errors"
 	"fmt"
 	"image"
 	"image/jpeg"
@@ -9,6 +13,59 @@ import (
 	"strings"
 	"time"
 )
+
+type frameSampler interface {
+	FrameInto(*image.RGBA, image.Rectangle, image.Rectangle) error
+}
+
+func captureTileSize(area image.Rectangle, maxSize int) (width, height int) {
+	width = min(area.Dx(), maxSize)
+	height = max(1, area.Dy()*width/area.Dx())
+	if height > maxSize {
+		width, height = max(1, area.Dx()*maxSize/area.Dy()), maxSize
+	}
+	return width, height
+}
+
+func frameGuard(area image.Rectangle, pixels []byte) string {
+	var encoded [16 + sha256.Size]byte
+	binary.BigEndian.PutUint32(encoded[0:4], uint32(area.Min.X))
+	binary.BigEndian.PutUint32(encoded[4:8], uint32(area.Min.Y))
+	binary.BigEndian.PutUint32(encoded[8:12], uint32(area.Max.X))
+	binary.BigEndian.PutUint32(encoded[12:16], uint32(area.Max.Y))
+	digest := sha256.Sum256(pixels)
+	copy(encoded[16:], digest[:])
+	return base64.RawURLEncoding.EncodeToString(encoded[:])
+}
+
+func (s *Server) validateFrame(frame string, x, y *int) error {
+	if len(frame) != base64.RawURLEncoding.EncodedLen(16+sha256.Size) || x == nil || y == nil {
+		return errors.New("expect_frame requires the guard from a single-frame capture and x and y coordinates")
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(frame)
+	if err != nil {
+		return errors.New("invalid frame guard")
+	}
+	area := image.Rect(int(binary.BigEndian.Uint32(raw[0:4])), int(binary.BigEndian.Uint32(raw[4:8])),
+		int(binary.BigEndian.Uint32(raw[8:12])), int(binary.BigEndian.Uint32(raw[12:16])))
+	width, height := s.desktop.Size()
+	if area.Empty() || !area.In(image.Rect(0, 0, width, height)) || !image.Pt(*x, *y).In(area) {
+		return errors.New("coordinates must be inside the observed frame region")
+	}
+	display, ok := s.desktop.(frameSampler)
+	if !ok {
+		return errors.New("virtual display capture unavailable")
+	}
+	w, h := captureTileSize(area, 900)
+	sample := image.NewRGBA(image.Rect(0, 0, w, h))
+	if err = display.FrameInto(sample, sample.Bounds(), area); err != nil {
+		return errors.New("cannot validate the observed frame")
+	}
+	if frameGuard(area, sample.Pix) != frame {
+		return errStaleObservation
+	}
+	return nil
+}
 
 func (s *Server) captureHTTP(w http.ResponseWriter, r *http.Request) {
 	if !method(w, r, http.MethodPost) {
@@ -35,9 +92,7 @@ func (s *Server) captureHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "use 1–9 frames and an interval of 100–500 milliseconds")
 		return
 	}
-	display, ok := s.desktop.(interface {
-		FrameInto(*image.RGBA, image.Rectangle, image.Rectangle) error
-	})
+	display, ok := s.desktop.(frameSampler)
 	if !ok {
 		writeError(w, 503, "virtual display capture unavailable")
 		return
@@ -62,11 +117,7 @@ func (s *Server) captureHTTP(w http.ResponseWriter, r *http.Request) {
 	if input.Frames == 1 {
 		maxWidth = 900
 	}
-	tileW := min(area.Dx(), maxWidth)
-	tileH := max(1, area.Dy()*tileW/area.Dx())
-	if tileH > maxWidth {
-		tileW, tileH = max(1, area.Dx()*maxWidth/area.Dy()), maxWidth
-	}
+	tileW, tileH := captureTileSize(area, maxWidth)
 	sheet := image.NewRGBA(image.Rect(0, 0, columns*tileW, rows*tileH))
 	marks := make([]string, 0, input.Frames)
 	start := time.Now()
@@ -92,5 +143,8 @@ func (s *Server) captureHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-OpticDeck-Grid", fmt.Sprintf("%dx%d", columns, rows))
 	w.Header().Set("X-OpticDeck-Tile", fmt.Sprintf("%dx%d", tileW, tileH))
 	w.Header().Set("X-OpticDeck-Region", fmt.Sprintf("(%d,%d) %dx%d", area.Min.X, area.Min.Y, area.Dx(), area.Dy()))
+	if input.Frames == 1 {
+		w.Header().Set("X-OpticDeck-Frame-Guard", frameGuard(area, sheet.Pix))
+	}
 	_ = jpeg.Encode(w, sheet, &jpeg.Options{Quality: 80})
 }

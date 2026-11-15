@@ -99,7 +99,7 @@ func serveMCP(args []string) error {
 			}
 			return textResult(result.String()), nil, nil
 		})
-	mcp.AddTool(s, &mcp.Tool{Name: "act", Description: "Send one virtual desktop action: click, double_click, right_click, set_text, press_key, hold_key, shortcut, or focus. For a named target send its observed expect_name. For coordinates send the observed expect_revision when available. hold_key takes duration_ms (100–2000)."},
+	mcp.AddTool(s, &mcp.Tool{Name: "act", Description: "Send one virtual desktop action: click, double_click, right_click, set_text, press_key, hold_key, shortcut, or focus. Send expect_name for a named target or expect_revision for an observed semantic revision. For coordinate input on opaque apps, pass expect_frame from a single crop including those coordinates. hold_key takes duration_ms (100–2000)."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in model.Action) (*mcp.CallToolResult, any, error) {
 			return query(ctx, "/api/act", in)
 		})
@@ -130,6 +130,9 @@ func serveMCP(args []string) error {
 			}
 			caption := fmt.Sprintf("Grid %s, tile %s image pixels, native region %s. Actual capture times in milliseconds: %s. Read left to right, then down. For coordinates use the position inside the latest tile, scale to the native region, then add its origin.",
 				res.Header.Get("X-OpticDeck-Grid"), res.Header.Get("X-OpticDeck-Tile"), res.Header.Get("X-OpticDeck-Region"), res.Header.Get("X-OpticDeck-Frames"))
+			if guard := res.Header.Get("X-OpticDeck-Frame-Guard"); guard != "" {
+				caption += "\nexpect_frame: " + guard
+			}
 			return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: caption}, &mcp.ImageContent{Data: b, MIMEType: "image/jpeg"}}}, nil, nil
 		})
 	return s.Run(context.Background(), &mcp.StdioTransport{})

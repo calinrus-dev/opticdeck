@@ -508,6 +508,7 @@ func clientCommand(command string, args []string) error {
 		fs.StringVar(&a.Text, "text", "", "text content")
 		fs.StringVar(&a.Key, "key", "", "key or chord")
 		fs.IntVar(&a.DurationMS, "duration-ms", 0, "hold_key duration (100–2000 milliseconds)")
+		fs.StringVar(&a.ExpectFrame, "expect-frame", "", "require unchanged pixels from a single-frame capture")
 		fs.Func("expect-name", "require the target's last observed name, including an empty name", func(v string) error { a.ExpectName = &v; return nil })
 		fs.Func("expect-revision", "require the last observed desktop revision", func(v string) error {
 			revision, err := strconv.ParseUint(v, 10, 64)
@@ -647,7 +648,7 @@ opticdeck agent-status [--state-dir DIR] [--phase PHASE --label TEXT]
 opticdeck tree [--state-dir DIR] [--fresh] [--compact [--match TEXT --limit N]]
 opticdeck launch [--state-dir DIR] [--toolkit auto|qt|electron] -- executable [arguments]
 opticdeck act [--state-dir DIR] --action ACTION [--node ID --text TEXT --key KEY --duration-ms MS --x N --y N]
-             [--expect-name NAME] [--expect-revision N]
+             [--expect-name NAME] [--expect-revision N] [--expect-frame GUARD]
 opticdeck host-view [--x11] [--allow-input] [--monitor-scale SCALE]
 opticdeck hotkeys|mcp|rustdesk [--state-dir DIR]`)
 		return nil

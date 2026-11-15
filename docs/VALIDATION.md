@@ -8,12 +8,14 @@
 - [Board Lab](../benchmarks/chess/) verified a full 63-ply game against its
   built-in opponent using the virtual desktop. The stale-observation regression
   moved a white pawn to e4, confirmed that e4 retained its ID with a new name,
-  and verified that the old name and a stale coordinate revision both rejected
-  input. The next fresh scan reported the pawn.
-- The MCP stdio server returned six live frames as a 65,866-byte JPEG over
+  and verified that the old name, a stale coordinate revision, and a stale
+  screenshot crop all rejected input. The next fresh scan reported the pawn.
+- The MCP stdio server returned six live frames as a 65,609-byte JPEG over
   1.15 seconds during the e4 move. The Codex built-in viewer also rendered its
-  own numbered six-frame preview. These measurements describe transport and
-  capture, with model token usage unmeasured.
+  own numbered six-frame preview. In a separate test with identical 480 ×
+  300 tiles and JPEG quality, the numbered grid used 110,345 bytes versus
+  97,760 bytes across six separate JPEGs. These are capture and transport
+  measurements. Model token usage was outside the test.
 - [Relay Run](../benchmarks/arcade/) exercised held keys, four directions,
   collision, and dash. One validated run finished with both relays in 3.5
   seconds.

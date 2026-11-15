@@ -50,6 +50,9 @@ those temporary directories. You can close the browser while the daemon runs.
    apps expose a window or canvas without the controls inside it. Use one MCP
    frame for a static check and a contact sheet for movement. Map coordinate
    input from the latest tile to native desktop pixels using the capture caption.
+   For a click in an opaque app, get a single crop of the target region and
+   pass its `expect_frame` to MCP `act` with the native coordinates. If the
+   guard becomes stale, take a new crop and locate the target again.
 
 Playwright example for controls named **Save** and **Name**:
 

@@ -78,7 +78,9 @@ For a short description of the controls available to an agent, use
 how many results to receive with `--limit`. Compact output omits field values
 and only includes geometry for regions that need visual inspection.
 
-GTK and Qt use the session's own AT-SPI2 bus. For Electron apps that support
+GTK and Qt use the session's own AT-SPI2 bus. Launch a Qt app with
+`opticdeck launch --toolkit qt -- APP` to use the private D-Bus discovery
+path on older Qt versions. For Electron apps that support
 Chromium command-line flags, use `opticdeck launch --toolkit electron -- APP`.
 This enables renderer accessibility and selects X11 inside the virtual session.
 See the [GTK, Qt and Electron benchmarks](docs/BENCHMARKS.md) for verified
@@ -110,9 +112,10 @@ Other supported actions include `double_click` and `focus`. Coordinates are
 native framebuffer pixels. Use `--expect-revision N` to require the semantic
 revision you observed. If the expected name or revision changed, the server
 returns `stale_observation` without dispatching input. Read again and choose
-the target from the new state. A canvas can change without changing its
-semantic revision, so use a current image for pixel-only targets. Prefer
-`set_text` for Unicode text.
+the target from the new state. A canvas can change without a change to its
+semantic revision. For pixel-only targets, take a single cropped capture and
+pass its `expect_frame` guard to the coordinate action. OpticDeck checks the
+sampled pixels in that region before dispatch. Prefer `set_text` for Unicode text.
 
 To use the [agent skill](SKILL.md) in Codex, copy it into your skills directory.
 For Claude Code, use `~/.claude/skills/opticdeck/`. The skill uses your existing
@@ -188,6 +191,12 @@ capture can crop to native desktop coordinates and includes the source origin,
 tile dimensions, and sample times so the agent can map an image position back
 to the desktop. MCP tools operate on the virtual desktop. Use the authorized
 host viewer independently for your real desktop.
+
+For a coordinate click in an opaque app, capture one frame of the target region
+and send the returned `expect_frame` string with the native x and y. If sampled
+pixels changed, read a new frame and choose the target again. Use a tight crop
+around the target to avoid unrelated changes. Multi-frame captures show motion
+and help decide where to take that next single crop.
 
 ## View your Wayland desktop
 

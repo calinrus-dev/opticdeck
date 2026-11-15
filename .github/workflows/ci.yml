@@ -33,7 +33,7 @@ jobs:
       - name: Install integration dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends tigervnc-standalone-server openbox at-spi2-core dbus dbus-x11 x11-utils libgtk-3-bin xfonts-base fonts-dejavu-core xterm zenity qt6-base-dev python3-gi gir1.2-gtk-3.0
+          sudo apt-get install -y --no-install-recommends tigervnc-standalone-server openbox at-spi2-core dbus dbus-x11 x11-utils libgtk-3-bin xfonts-base fonts-dejavu-core xterm zenity qt6-base-dev qt6-qpa-plugins python3-gi gir1.2-gtk-3.0
       - name: Unit tests
         run: make test
       - name: Race detector
@@ -56,9 +56,10 @@ jobs:
           CHROMIUM_EXECUTABLE="$(node -p 'require("playwright").chromium.executablePath()')" \
             SEMADESK_STATE="$state/state.json" node tests/browser.cjs
       - name: Run GTK and Qt benchmark smoke test
+        shell: bash
         run: |
           OPTICDECK_BENCH_SAMPLES=5 PYTHON=/usr/bin/python3 XVNC=Xtigervnc \
-            CHROMIUM_EXECUTABLE="$(command -v google-chrome)" node benchmarks/run.cjs gtk qt > toolkit-benchmarks.json
+            CHROMIUM_EXECUTABLE="$(command -v google-chrome)" node benchmarks/run.cjs gtk qt | tee toolkit-benchmarks.json
       - uses: actions/upload-artifact@v4
         if: always()
         with:

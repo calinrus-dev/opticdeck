@@ -414,7 +414,7 @@ func (s *Server) send(c *client, v any) {
 	s.mu.Unlock()
 }
 
-var errStaleObservation = errors.New("the observed control or desktop revision changed; read the current desktop and choose the target again")
+var errStaleObservation = errors.New("the observed control, desktop revision, or frame changed; read the current desktop and choose the target again")
 
 func (s *Server) actionHTTP(w http.ResponseWriter, r *http.Request) {
 	if !method(w, r, http.MethodPost) {
@@ -508,6 +508,11 @@ func (s *Server) act(ctx context.Context, a model.Action) error {
 	}
 	if a.Node == "" && a.Action != "press_key" && a.Action != "hold_key" && a.Action != "shortcut" && a.X == nil {
 		return errors.New("semantic target or coordinates required")
+	}
+	if a.ExpectFrame != "" {
+		if err := s.validateFrame(a.ExpectFrame, a.X, a.Y); err != nil {
+			return err
+		}
 	}
 	if err := actionCtx.Err(); err != nil {
 		return err

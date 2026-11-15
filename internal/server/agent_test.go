@@ -3,9 +3,11 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"image"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -15,6 +17,51 @@ import (
 type cancellableEngine struct {
 	fakeEngine
 	started chan struct{}
+}
+
+type changingFrame struct {
+	fakeDesktop
+	pixel atomic.Uint32
+}
+
+func (d *changingFrame) FrameInto(output *image.RGBA, _, _ image.Rectangle) error {
+	output.Pix[0] = byte(d.pixel.Load())
+	return nil
+}
+
+func TestCoordinateActionRejectsChangedFrameWithStableTree(t *testing.T) {
+	s, engine, ts := testServer(t)
+	desktop := &changingFrame{}
+	s.desktop = desktop
+	res := request(t, ts, "POST", "/api/capture?token=test-secret", `{"frames":1,"x":10,"y":10,"width":30,"height":30}`, "", "")
+	guard := res.Header.Get("X-OpticDeck-Frame-Guard")
+	if res.StatusCode != http.StatusOK || guard == "" {
+		t.Fatalf("capture returned %d without a guard", res.StatusCode)
+	}
+	closeResponse(res)
+
+	body := `{"action":"click","x":15,"y":20,"expect_frame":"` + guard + `"}`
+	res = request(t, ts, "POST", "/api/act?token=test-secret", body, "", "")
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("unchanged frame returned %d", res.StatusCode)
+	}
+	closeResponse(res)
+
+	desktop.pixel.Store(1)
+	res = request(t, ts, "POST", "/api/act?token=test-secret", body, "", "")
+	defer res.Body.Close()
+	var result struct{ Code string }
+	if err := json.NewDecoder(res.Body).Decode(&result); err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode != http.StatusConflict || result.Code != "stale_observation" {
+		t.Fatalf("changed frame returned %d %+v", res.StatusCode, result)
+	}
+	engine.mu.Lock()
+	defer engine.mu.Unlock()
+	if engine.actions != 1 {
+		t.Fatalf("dispatched %d actions, want one", engine.actions)
+	}
 }
 
 func (e *cancellableEngine) Act(ctx context.Context, _ model.Action, _ model.Node) error {
