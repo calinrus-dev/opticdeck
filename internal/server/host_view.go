@@ -31,7 +31,10 @@ func NewHostViewer(cfg Config, assets fs.FS, inputToken string, monitorScale flo
 	s := &Server{cfg: cfg, ctx: ctx, cancel: cancel, hostView: true, hostInputToken: inputToken, hostMonitorScale: monitorScale, rfbs: make(map[*websocket.Conn]net.Conn)}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /rfb", s.handleRFB)
-	mux.Handle("GET /novnc/", http.FileServer(http.FS(web.FS())))
+	shared := http.FileServer(http.FS(web.FS()))
+	mux.Handle("GET /novnc/", shared)
+	mux.Handle("GET /contact-sheet.js", shared)
+	mux.Handle("GET /contact-sheet.css", shared)
 	files := http.FileServer(http.FS(assets))
 	mux.Handle("GET /{$}", files)
 	mux.Handle("GET /host.css", files)

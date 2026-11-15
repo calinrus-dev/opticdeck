@@ -6,10 +6,11 @@
   <meta name="color-scheme" content="dark">
   <title>Host view · OpticDeck</title>
   <link rel="stylesheet" href="/host.css">
+  <link rel="stylesheet" href="/contact-sheet.css">
   <script type="module" src="/host.js"></script>
 </head>
 <body>
-  <main>
+  <main id="viewer">
     <header>
       <div><span class="brand">OpticDeck</span><h1>Host view</h1></div>
       <span class="mode" id="mode">Read only</span>
@@ -23,8 +24,25 @@
         <button id="share" type="button">Share display</button>
         <button id="control" type="button" hidden>Share with input</button>
         <button id="stop" type="button" disabled>Stop viewing</button>
+        <div class="view-actions" role="group" aria-label="Viewer controls">
+          <button id="capture-contact-sheet" type="button" aria-haspopup="dialog" disabled>Capture contact sheet</button>
+          <button id="fit" type="button" aria-pressed="true">Fit to window</button>
+          <button id="fullscreen" type="button" aria-pressed="false" hidden>Fullscreen</button>
+        </div>
+        <span id="contact-sheet-status" role="status"></span>
       </div>
     </section>
+    <dialog id="contact-sheet-dialog" aria-labelledby="contact-sheet-heading">
+      <form method="dialog">
+        <div class="contact-sheet-heading">
+          <h2 id="contact-sheet-heading">Contact sheet</h2>
+          <button type="submit" autofocus>Close</button>
+        </div>
+        <p id="contact-sheet-detail"></p>
+        <img id="contact-sheet-image" alt="">
+        <div class="contact-sheet-actions"><a id="contact-sheet-download" download>Save JPEG</a></div>
+      </form>
+    </dialog>
   </main>
 </body>
 </html>

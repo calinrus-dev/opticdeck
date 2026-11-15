@@ -24,13 +24,16 @@ type Node struct {
 }
 
 type Action struct {
-	ID     string `json:"id,omitempty"`
-	Node   string `json:"node,omitempty"`
-	Action string `json:"action"`
-	Text   string `json:"text,omitempty"`
-	Key    string `json:"key,omitempty"`
-	X      *int   `json:"x,omitempty"`
-	Y      *int   `json:"y,omitempty"`
+	ID             string  `json:"id,omitempty"`
+	Node           string  `json:"node,omitempty"`
+	Action         string  `json:"action"`
+	Text           string  `json:"text,omitempty"`
+	Key            string  `json:"key,omitempty"`
+	X              *int    `json:"x,omitempty"`
+	Y              *int    `json:"y,omitempty"`
+	DurationMS     int     `json:"duration_ms,omitempty"`
+	ExpectName     *string `json:"expect_name,omitempty"`
+	ExpectRevision *uint64 `json:"expect_revision,omitempty"`
 }
 
 type Control struct {
@@ -38,11 +41,18 @@ type Control struct {
 	Owner  string `json:"owner,omitempty"`
 }
 
+type AgentStatus struct {
+	Phase     string `json:"phase"`
+	Label     string `json:"label,omitempty"`
+	UpdatedAt string `json:"updated_at,omitempty"`
+}
+
 type Snapshot struct {
-	Type     string  `json:"type"`
-	Revision uint64  `json:"revision"`
-	Width    int     `json:"width"`
-	Height   int     `json:"height"`
-	Nodes    []Node  `json:"nodes"`
-	Control  Control `json:"control"`
+	Type        string       `json:"type"`
+	Revision    uint64       `json:"revision"`
+	Width       int          `json:"width"`
+	Height      int          `json:"height"`
+	Nodes       []Node       `json:"nodes"`
+	Control     Control      `json:"control"`
+	AgentStatus *AgentStatus `json:"agent_status,omitempty"`
 }

@@ -1,0 +1,39 @@
+:root {
+  color-scheme: dark;
+  font-family: system-ui, sans-serif;
+  color: #e4edf0;
+  background: #11191e;
+}
+* { box-sizing: border-box; }
+body { margin: 0; }
+main { width: min(100% - 3rem, 59rem); margin: 2rem auto; }
+header h1 { margin: 0; font-size: 2.15rem; line-height: 1.15; letter-spacing: -.02em; }
+header p { margin: .55rem 0 1.4rem; color: #aabcc3; }
+.game { display: grid; grid-template-columns: minmax(18rem, 35rem) minmax(12rem, 1fr); gap: 1.5rem; }
+.board { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); width: 100%; aspect-ratio: 1; border: 1px solid #425860; }
+.square { position: relative; border: 0; padding: 0; min-width: 0; font-size: clamp(1.35rem, 4vw, 2.8rem); line-height: 1; cursor: pointer; }
+.square.light { background: #a7bebd; }
+.square.dark { background: #57777e; }
+.square:focus-visible { z-index: 1; outline: 3px solid #e9ff8e; outline-offset: -3px; }
+.square[aria-pressed="true"] { box-shadow: inset 0 0 0 4px #e9ff8e; }
+.square.legal::after { position: absolute; inset: 35%; content: ''; border-radius: 50%; background: #e9ff8ec9; pointer-events: none; }
+.square.last { box-shadow: inset 0 0 0 2px #e9ff8e80; }
+.piece { display: inline-block; font-family: "DejaVu Sans", sans-serif; }
+.white .piece { color: #f9fbfc; text-shadow: 0 1px 3px #172828; }
+.black .piece { color: #162b34; text-shadow: 0 1px 1px #d1e2e24d; }
+.coordinate { position: absolute; bottom: 3px; left: 5px; font: 600 .63rem system-ui, sans-serif; }
+.light .coordinate { color: #26464d; }
+.dark .coordinate { color: #f1f9f8; }
+aside { min-width: 0; }
+form { display: grid; gap: .5rem; }
+form label { font-weight: 650; }
+form select, form button { font: inherit; border-radius: .4rem; padding: .55rem; border: 1px solid #536772; background: #203039; color: #edf4f7; }
+form button { background: #bde278; color: #152112; font-weight: 700; cursor: pointer; }
+.state { margin-top: 1rem; min-height: 3.25rem; padding: .75rem; border: 1px solid #526773; border-radius: .4rem; color: #ddf2af; }
+h2 { font-size: 1rem; margin-top: 1.2rem; }
+ol { margin: 0; padding-left: 1.7rem; max-height: 16rem; overflow: auto; }
+li { margin: .2rem 0; font-variant-numeric: tabular-nums; }
+@media (max-width: 43rem) {
+  main { width: min(100% - 1.25rem, 35rem); margin: 1rem auto; }
+  .game { grid-template-columns: 1fr; gap: 1rem; }
+}

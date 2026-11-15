@@ -10,10 +10,12 @@ import (
 	"io"
 	"math"
 	"net"
+	"net/url"
 	"os"
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"syscall"
 	"time"
@@ -23,12 +25,15 @@ import (
 	"github.com/godbus/dbus/v5"
 )
 
+var localXDisplay = regexp.MustCompile(`^:[0-9]+(\.[0-9]+)?$`)
+
 func hostView(args []string) error {
 	flags := flag.NewFlagSet("host-view", flag.ContinueOnError)
+	x11 := flags.Bool("x11", false, "share the current native X11 display instead of a Wayland monitor")
 	allowInput := flags.Bool("allow-input", false, "permit one browser to send keyboard and pointer input")
 	monitorScale := flags.Float64("monitor-scale", 1, "Wayland monitor scale for pointer input (1 to 8, e.g. 1.5 for 150%)")
 	flags.Usage = func() {
-		fmt.Fprintln(flags.Output(), "Usage: opticdeck host-view [--allow-input] [--monitor-scale SCALE]\n\nView one monitor of the current Wayland session in a local browser.\nThe system asks for permission when you connect. Press Ctrl+C to stop.")
+		fmt.Fprintln(flags.Output(), "Usage: opticdeck host-view [--x11] [--allow-input] [--monitor-scale SCALE]\n\nView the current Linux desktop in a local browser. Wayland shares one monitor.\nWith --x11, TigerVNC shares the current X11 display and asks before each connection.\nPress Ctrl+C to stop.")
 		flags.PrintDefaults()
 	}
 	if err := flags.Parse(args); err != nil {
@@ -43,17 +48,26 @@ func hostView(args []string) error {
 	if math.IsNaN(*monitorScale) || *monitorScale < 1 || *monitorScale > 8 {
 		return errors.New("monitor scale must be between 1 and 8")
 	}
-	if os.Geteuid() == 0 || os.Getenv("XDG_SESSION_TYPE") != "wayland" || os.Getenv("WAYLAND_DISPLAY") == "" {
-		return errors.New("host-view requires an interactive Wayland session as your desktop user")
+	if *x11 && *monitorScale != 1 {
+		return errors.New("--monitor-scale applies only to Wayland")
 	}
-	backend, err := exec.LookPath("w0vncserver")
+	if os.Geteuid() == 0 {
+		return errors.New("host-view must run as your desktop user")
+	}
+	backendName, x11Display, err := hostBackend(*x11, os.Getenv("XDG_SESSION_TYPE"), os.Getenv("DISPLAY"), os.Getenv("WAYLAND_DISPLAY"), os.Getenv("WAYLAND_SOCKET"))
 	if err != nil {
-		return errors.New("host-view requires TigerVNC's w0vncserver")
+		return err
+	}
+	backend, err := exec.LookPath(backendName)
+	if err != nil {
+		return fmt.Errorf("host-view requires TigerVNC's %s", backendName)
 	}
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer cancel()
-	if err = checkHostPortal(ctx); err != nil {
-		return err
+	if !*x11 {
+		if err = checkHostPortal(ctx); err != nil {
+			return err
+		}
 	}
 	dir, err := os.MkdirTemp("", "opticdeck-host-")
 	if err != nil {
@@ -95,13 +109,13 @@ func hostView(args []string) error {
 	// Keep that thread alive until the viewer is closed and the child is reaped.
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
-	cmd := exec.CommandContext(ctx, backend, hostBackendArgs(socket, *allowInput)...)
+	cmd := exec.CommandContext(ctx, backend, hostBackendArgs(socket, x11Display, *allowInput)...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Pdeathsig: syscall.SIGKILL, Setpgid: true}
 	cmd.Stderr = os.Stderr
 	cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
 	cmd.WaitDelay = 2 * time.Second
 	if err = cmd.Start(); err != nil {
-		return fmt.Errorf("start Wayland sharing: %w", err)
+		return fmt.Errorf("start %s: %w", backendName, err)
 	}
 	var backendErr error
 	backendDone := make(chan struct{})
@@ -130,10 +144,17 @@ func hostView(args []string) error {
 	serveDone := make(chan error, 1)
 	go func() { serveDone <- viewer.Serve(listener) }()
 	link := fmt.Sprintf("http://%s/?token=%s", listener.Addr(), token)
+	fragment := url.Values{}
 	if inputToken != "" {
-		link += "#input=" + inputToken
+		fragment.Set("input", inputToken)
 	}
-	fmt.Printf("OpticDeck host view\nOpen this private URL, choose a sharing mode and approve the system dialog:\n%s\nPress Ctrl+C to stop.\n", link)
+	if *x11 {
+		fragment.Set("backend", "x11")
+	}
+	if len(fragment) != 0 {
+		link += "#" + fragment.Encode()
+	}
+	fmt.Printf("OpticDeck host view\nOpen this private URL, choose a sharing mode and accept the desktop prompt:\n%s\nPress Ctrl+C to stop.\n", link)
 	select {
 	case <-ctx.Done():
 		return nil
@@ -144,16 +165,34 @@ func hostView(args []string) error {
 	}
 }
 
-func hostBackendArgs(socket string, allowInput bool) []string {
+func hostBackend(x11 bool, sessionType, display, waylandDisplay, waylandSocket string) (name, x11Display string, err error) {
+	if x11 {
+		if sessionType != "x11" || !localXDisplay.MatchString(display) || waylandDisplay != "" || waylandSocket != "" {
+			return "", "", errors.New("--x11 requires a native local X11 session and a DISPLAY such as :0")
+		}
+		return "x0vncserver", display, nil
+	}
+	if sessionType != "wayland" || waylandDisplay == "" {
+		return "", "", errors.New("host-view requires an interactive Wayland session; for a native X11 session use --x11")
+	}
+	return "w0vncserver", "", nil
+}
+
+func hostBackendArgs(socket, x11Display string, allowInput bool) []string {
 	input := "0"
 	if allowInput {
 		input = "1"
 	}
-	return []string{
+	args := []string{
 		"-rfbport", "-1", "-rfbunixpath", socket, "-rfbunixmode", "0600",
-		"-SecurityTypes", "None", "-RememberDisplayChoice", "Never",
+		"-SecurityTypes", "None",
 		"-AcceptKeyEvents=" + input, "-AcceptPointerEvents=" + input, "-AlwaysShared", "-desktop", "OpticDeck Host View",
 	}
+	if x11Display != "" {
+		return append(args, "-display", x11Display, "-QueryConnect", "-QueryConnectTimeout", "60",
+			"-AcceptSetDesktopSize=0", "-AcceptCutText=0", "-SendCutText=0", "-SetPrimary=0", "-SendPrimary=0")
+	}
+	return append(args, "-RememberDisplayChoice", "Never")
 }
 
 func hostBackendExit(ctx context.Context, err error) error {
@@ -161,9 +200,9 @@ func hostBackendExit(ctx context.Context, err error) error {
 		return nil
 	}
 	if err != nil {
-		return fmt.Errorf("Wayland sharing stopped: %w", err)
+		return fmt.Errorf("desktop sharing stopped: %w", err)
 	}
-	return errors.New("Wayland sharing stopped")
+	return errors.New("desktop sharing stopped")
 }
 
 func hostSocketReady(ctx context.Context, path string) bool {

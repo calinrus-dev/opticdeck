@@ -1,5 +1,7 @@
 # OpticDeck
 
+[![CI](https://github.com/calinrus-dev/opticdeck/actions/workflows/ci.yml/badge.svg)](https://github.com/calinrus-dev/opticdeck/actions/workflows/ci.yml)
+
 Previously published as SemaDesk. The `semadesk` command remains an alias.
 
 OpticDeck runs a separate Linux desktop and exposes native app controls as HTML
@@ -12,11 +14,11 @@ The session has its own virtual X11 display, D-Bus session bus, and window
 manager. It keeps running in the background when the browser closes, and its
 keyboard and pointer input stay in the virtual desktop.
 
-![GTK test application with highlighted semantic controls in the OpticDeck viewer](docs/images/desktop.png)
+![OpticDeck viewer showing a white pawn on e4, agent status, and desktop controls](docs/images/board-lab.jpg)
 
 ## Install and run
 
-Build on Linux with Go 1.23 or newer and Make. At runtime, OpticDeck needs
+Build on Linux with Go 1.25 or newer and Make. At runtime, OpticDeck needs
 TigerVNC with Unix RFB socket support (`-rfbunixpath`, `-rfbunixmode`, and
 `-rfbport -1`), Openbox, D-Bus, and AT-SPI2. The desktop launcher uses
 `xdg-open` from `xdg-utils`. The dependency installer selects packages for
@@ -76,32 +78,45 @@ For a short description of the controls available to an agent, use
 how many results to receive with `--limit`. Compact output omits field values
 and only includes geometry for regions that need visual inspection.
 
+GTK and Qt use the session's own AT-SPI2 bus. For Electron apps that support
+Chromium command-line flags, use `opticdeck launch --toolkit electron -- APP`.
+This enables renderer accessibility and selects X11 inside the virtual session.
+See the [GTK, Qt and Electron benchmarks](docs/BENCHMARKS.md) for verified
+controls, timings, output sizes, and the reproduction steps.
+
 1. Open the session URL. Read the browser's DOM or accessibility tree, or run
    `opticdeck tree`.
 2. Find the control by its role, accessible name, and current state. The DOM
    also provides `data-node-id`, `data-actions`, and `data-shortcut`.
 3. Act on the control. OpticDeck uses AT-SPI2 when supported and can send X11
    input inside the virtual session.
-4. Read the updated state. Inspect the relevant region visually if it has
+4. Read the updated state. Use `--fresh` when you need a new scan. Inspect the relevant region visually if it has
    `data-vision-fallback="true"` or if you need to verify the rendered result.
 
 The CLI works without the browser. Replace `NODE_ID` with an ID from the
 current session tree.
 
 ```sh
-opticdeck act --node NODE_ID --action click
+opticdeck tree --fresh --compact --match e4
+opticdeck act --node NODE_ID --action click --expect-name 'e4 empty'
 opticdeck act --node NODE_ID --action set_text --text 'Hello, 世界'
 opticdeck act --action shortcut --key Ctrl+s
 opticdeck act --action press_key --key Return
+opticdeck act --action hold_key --key Right --duration-ms 320
 opticdeck act --action right_click --x 240 --y 180
 ```
 
 Other supported actions include `double_click` and `focus`. Coordinates are
-native framebuffer pixels. Prefer `set_text` for Unicode text.
+native framebuffer pixels. Use `--expect-revision N` to require the semantic
+revision you observed. If the expected name or revision changed, the server
+returns `stale_observation` without dispatching input. Read again and choose
+the target from the new state. A canvas can change without changing its
+semantic revision, so use a current image for pixel-only targets. Prefer
+`set_text` for Unicode text.
 
 To use the [agent skill](SKILL.md) in Codex, copy it into your skills directory.
 For Claude Code, use `~/.claude/skills/opticdeck/`. The skill uses your existing
-browser automation or shell tools.
+MCP client, browser automation, or shell tools.
 
 ```sh
 install -Dm644 SKILL.md ~/.codex/skills/opticdeck/SKILL.md
@@ -126,12 +141,53 @@ CLI remain available if you close the browser.
 ## Follow along in Codex
 
 Open your authenticated session URL in the Codex built-in browser and keep the
-browser pane visible. The desktop updates live. The activity list shows what
-happened without recording typed text or clipboard contents. Use **Take control**
-to pause agent actions in the virtual session and switch to manual input.
+browser pane visible. Run `opticdeck url` to reopen a running session. Closing
+the tab leaves the virtual desktop running. The activity list names actions
+without recording typed text or clipboard contents. **Outline app** highlights
+the selected application's controls when multiple windows are open.
+
+**Capture contact sheet** takes six samples 220 ms apart and shows them in one
+numbered JPEG, with timestamps. Preview it in the viewer and select **Save
+JPEG** to export it. The same control works in the host viewer. For changes
+over time, see the [chess](benchmarks/chess/) and [keyboard game](benchmarks/arcade/)
+fixtures.
+
+- **Pause agent** or `Alt+Shift+P` leaves the apps running and blocks agent input
+  until you resume. Use `opticdeck pause` and `opticdeck resume` from a terminal.
+- **Take control** gives you direct mouse and keyboard access. Return control
+  to resume the agent.
+- **Stop session** or `Alt+Shift+Esc` opens a prompt before closing the virtual
+  desktop and its apps. `opticdeck stop` stops it directly from the terminal.
+- `opticdeck hotkeys` asks the desktop to register global pause and stop
+  shortcuts for the running virtual session. Accept or choose bindings in the
+  system dialog. Stop the shortcut listener with Ctrl+C. Availability depends
+  on the desktop's Global Shortcuts portal.
+
+An agent can show a short progress update with
+`opticdeck agent-status --phase working --label 'Checking the export'`.
+Supported phases are `idle`, `working`, `waiting`, `done`, and `error`.
 For common tasks, read a bounded semantic tree and group related actions before
 checking the result. Inspect the rendered desktop when controls are missing or
 the result is visual. See the [OpenAI Computer Use guide](https://developers.openai.com/api/docs/guides/tools-computer-use).
+
+### Connect the agent with MCP
+
+Run `opticdeck start` locally and register the stdio server in Codex. Start a
+new chat to use the connection. Open the viewer separately when you want to
+follow the agent's work.
+
+```sh
+codex mcp add opticdeck -- "$HOME/.local/bin/opticdeck" mcp
+```
+
+The server uses the default authenticated virtual session. Append
+`--state-dir DIR` to the server command to select another session. It exposes
+`status`, `observe`, `act`, `capture`, and `update_progress`. Use one frame
+for static details or up to nine frames in a single image for movement. A
+capture can crop to native desktop coordinates and includes the source origin,
+tile dimensions, and sample times so the agent can map an image position back
+to the desktop. MCP tools operate on the virtual desktop. Use the authorized
+host viewer independently for your real desktop.
 
 ## View your Wayland desktop
 
@@ -152,6 +208,22 @@ of the monitor you select. For example, use `--monitor-scale 3` for 300%.
 Keep the default at 100% or when your TigerVNC build already compensates.
 [TigerVNC tracking issue](https://github.com/TigerVNC/tigervnc/issues/2052)
 
+On a native X11 session, `opticdeck host-view --x11` uses TigerVNC's
+`x0vncserver` and asks for approval for each browser connection. It shares the
+local X11 root, which may span multiple monitors. Host views use a loopback
+address. **Fit to window** and **Fullscreen** help follow the selected display.
+
+### Open RustDesk inside OpticDeck
+
+Install [RustDesk](https://rustdesk.com/docs/en/client/) or put its official
+executable AppImage at `${XDG_DATA_HOME:-$HOME/.local/share}/opticdeck/RustDesk.AppImage`.
+Run `opticdeck rustdesk` to open the outgoing client in the virtual desktop and
+`opticdeck open` to see it. Select the remote device in RustDesk and approve
+the connection on that device. The remote view provides pixels and receives
+mouse and keyboard input through RustDesk. Remote app semantics depend on the
+remote client exposing them. The RustDesk Flutter window was tested as a
+visual region.
+
 ## Architecture and compatibility
 
 OpticDeck embeds the browser UI in a Go daemon. AT-SPI2 supplies native
@@ -161,8 +233,8 @@ updates. A single scale transform keeps the semantic overlay aligned with the
 noVNC canvas. See the [architecture decision](docs/adr/0001-architecture.md)
 for implementation details.
 
-GTK apps with accessibility enabled are the primary verified path. Qt apps
-need a working accessibility bridge. Wine apps, games, and canvas-based UIs
+Standard GTK, Qt Widgets, and Electron controls passed live tests. Custom
+widgets, Wine apps, games, and canvas-based UIs
 may only expose a region for visual inspection and X11 input. A separate X11
 session can run under a Wayland or X11 host. See [validation](docs/VALIDATION.md)
 for tested environments and coverage. The [experimental Windows UI Automation

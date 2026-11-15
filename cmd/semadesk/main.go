@@ -30,7 +30,7 @@ import (
 	"github.com/calinrus-dev/semadesk/internal/session"
 )
 
-var version = "0.2.0"
+var version = "0.3.0"
 
 type state struct {
 	PID        int       `json:"pid"`
@@ -154,27 +154,16 @@ func validateURL(raw string) error {
 	return nil
 }
 
+var localHTTP = &http.Client{Timeout: 12 * time.Second, Transport: &http.Transport{
+	Proxy: nil, MaxIdleConns: 4, MaxIdleConnsPerHost: 4, IdleConnTimeout: 20 * time.Second,
+}, CheckRedirect: func(*http.Request, []*http.Request) error { return errors.New("redirect refused") }}
+
 func request(s state, path string, payload any) (json.RawMessage, error) {
-	var body io.Reader
-	method := http.MethodGet
-	if payload != nil {
-		b, err := json.Marshal(payload)
-		if err != nil {
-			return nil, err
-		}
-		body = bytes.NewReader(b)
-		method = http.MethodPost
-	}
-	r, err := http.NewRequest(method, s.URL+path, body)
-	if err != nil {
-		return nil, err
-	}
-	r.Header.Set("Content-Type", "application/json")
-	if s.Token != "" {
-		r.Header.Set("Authorization", "Bearer "+s.Token)
-	}
-	c := http.Client{Timeout: 12 * time.Second, Transport: &http.Transport{Proxy: nil}, CheckRedirect: func(*http.Request, []*http.Request) error { return errors.New("redirect refused") }}
-	resp, err := c.Do(r)
+	return requestContext(context.Background(), s, path, payload)
+}
+
+func requestContext(ctx context.Context, s state, path string, payload any) (json.RawMessage, error) {
+	resp, err := localRequest(ctx, s, path, payload)
 	if err != nil {
 		return nil, err
 	}
@@ -190,6 +179,28 @@ func request(s state, path string, payload any) (json.RawMessage, error) {
 		return nil, errors.New("server returned invalid JSON")
 	}
 	return b, nil
+}
+
+func localRequest(ctx context.Context, s state, path string, payload any) (*http.Response, error) {
+	var body io.Reader
+	method := http.MethodGet
+	if payload != nil {
+		b, err := json.Marshal(payload)
+		if err != nil {
+			return nil, err
+		}
+		body = bytes.NewReader(b)
+		method = http.MethodPost
+	}
+	r, err := http.NewRequestWithContext(ctx, method, s.URL+path, body)
+	if err != nil {
+		return nil, err
+	}
+	r.Header.Set("Content-Type", "application/json")
+	if s.Token != "" {
+		r.Header.Set("Authorization", "Bearer "+s.Token)
+	}
+	return localHTTP.Do(r)
 }
 
 func start(args []string, stdout io.Writer) error {
@@ -398,6 +409,7 @@ func serve(args []string) (retErr error) {
 		return err
 	}
 	defer e.Close()
+	s.SetAccessibilityAddress(e.Address())
 	listener, err := net.Listen("tcp4", fmt.Sprintf("127.0.0.1:%d", o.port))
 	if err != nil {
 		return err
@@ -471,11 +483,22 @@ func clientCommand(command string, args []string) error {
 	dir := fs.String("state-dir", defaultDir(), "private state directory")
 	a := model.Action{}
 	var x, y int
+	phase, label := "", ""
+	toolkit := "auto"
+	if command == "launch" {
+		fs.StringVar(&toolkit, "toolkit", "auto", "launch preset: auto, qt, electron")
+	}
+	if command == "agent-status" {
+		fs.StringVar(&phase, "phase", "idle", "idle, working, waiting, done, or error")
+		fs.StringVar(&label, "label", "", "short activity description shown in the viewer")
+	}
 	compact := false
+	fresh := false
 	match := ""
 	limit := 20
 	if command == "tree" {
 		fs.BoolVar(&compact, "compact", false, "list only actionable controls and visual fallback regions")
+		fs.BoolVar(&fresh, "fresh", false, "wait for a fresh accessibility scan before returning")
 		fs.StringVar(&match, "match", "", "filter compact results by name or role")
 		fs.IntVar(&limit, "limit", 20, "maximum compact results (1–100)")
 	}
@@ -484,6 +507,15 @@ func clientCommand(command string, args []string) error {
 		fs.StringVar(&a.Action, "action", "click", "action name")
 		fs.StringVar(&a.Text, "text", "", "text content")
 		fs.StringVar(&a.Key, "key", "", "key or chord")
+		fs.IntVar(&a.DurationMS, "duration-ms", 0, "hold_key duration (100–2000 milliseconds)")
+		fs.Func("expect-name", "require the target's last observed name, including an empty name", func(v string) error { a.ExpectName = &v; return nil })
+		fs.Func("expect-revision", "require the last observed desktop revision", func(v string) error {
+			revision, err := strconv.ParseUint(v, 10, 64)
+			if err == nil {
+				a.ExpectRevision = &revision
+			}
+			return err
+		})
 		fs.IntVar(&x, "x", -1, "native framebuffer x")
 		fs.IntVar(&y, "y", -1, "native framebuffer y")
 	}
@@ -506,10 +538,23 @@ func clientCommand(command string, args []string) error {
 	var path string
 	var payload any
 	switch command {
+	case "url":
+		if _, err := request(s, "/api/status", nil); err != nil {
+			return err
+		}
+		fmt.Fprintln(os.Stdout, s.viewerURL())
+		return nil
+	case "pause", "resume":
+		path, payload = "/api/control", map[string]bool{"paused": command == "pause"}
+	case "agent-status":
+		path, payload = "/api/agent-status", map[string]string{"phase": phase, "label": label}
 	case "status":
 		path = "/api/status"
 	case "tree":
 		path = "/api/tree"
+		if fresh {
+			path += "?fresh=1"
+		}
 	case "stop":
 		path = "/api/stop"
 		payload = struct{}{}
@@ -517,8 +562,12 @@ func clientCommand(command string, args []string) error {
 		if fs.NArg() == 0 {
 			return errors.New("launch requires -- executable [arguments]")
 		}
+		argv, err := launchArguments(toolkit, fs.Args())
+		if err != nil {
+			return err
+		}
 		path = "/api/launch"
-		payload = map[string]any{"argv": fs.Args()}
+		payload = map[string]any{"argv": argv}
 	case "act":
 		if x >= 0 || y >= 0 {
 			if x < 0 || y < 0 {
@@ -542,10 +591,7 @@ func clientCommand(command string, args []string) error {
 	if command == "status" {
 		var status map[string]any
 		if json.Unmarshal(b, &status) == nil {
-			status["url"] = s.URL
-			if s.Token != "" {
-				status["url"] = s.URL + "/?token=" + s.Token
-			}
+			status["url"] = s.viewerURL()
 			status["display"] = s.Display
 			status["pid"] = s.PID
 			return writeJSON(os.Stdout, status)
@@ -566,7 +612,7 @@ func clientCommand(command string, args []string) error {
 
 func run() error {
 	if len(os.Args) < 2 {
-		return errors.New("usage: opticdeck open|start|stop|status|launch|tree|act|host-view|version")
+		return errors.New("usage: opticdeck open|url|start|stop|pause|resume|status|agent-status|launch|tree|act|host-view|hotkeys|mcp|rustdesk|version")
 	}
 	switch os.Args[1] {
 	case "start":
@@ -575,6 +621,12 @@ func run() error {
 		return openViewer(os.Args[2:])
 	case "host-view":
 		return hostView(os.Args[2:])
+	case "hotkeys":
+		return hotkeys(os.Args[2:])
+	case "mcp":
+		return serveMCP(os.Args[2:])
+	case "rustdesk":
+		return launchRustDesk(os.Args[2:])
 	case "_serve":
 		return serve(os.Args[2:])
 	case "_guard":
@@ -582,13 +634,22 @@ func run() error {
 			return errors.New("missing process group")
 		}
 		return guardian(os.Args[2])
-	case "stop", "status", "launch", "tree", "act":
+	case "url", "stop", "pause", "resume", "status", "agent-status", "launch", "tree", "act":
 		return clientCommand(os.Args[1], os.Args[2:])
 	case "version", "--version":
 		fmt.Println(version)
 		return nil
 	case "help", "--help", "-h":
-		fmt.Println("opticdeck open [--state-dir DIR]\nopticdeck start [--width 1280 --height 800 --port 0 --state-dir DIR --no-token]\nopticdeck status|stop [--state-dir DIR]\nopticdeck tree [--state-dir DIR] [--compact [--match TEXT --limit N]]\nopticdeck launch [--state-dir DIR] -- executable [arguments]\nopticdeck act [--state-dir DIR] --node ID --action ACTION [--text TEXT --key KEY --x N --y N]\nopticdeck host-view [--allow-input] [--monitor-scale SCALE]")
+		fmt.Println(`opticdeck open|url [--state-dir DIR]
+opticdeck start [--width 1280 --height 800 --port 0 --state-dir DIR --no-token]
+opticdeck status|pause|resume|stop [--state-dir DIR]
+opticdeck agent-status [--state-dir DIR] [--phase PHASE --label TEXT]
+opticdeck tree [--state-dir DIR] [--fresh] [--compact [--match TEXT --limit N]]
+opticdeck launch [--state-dir DIR] [--toolkit auto|qt|electron] -- executable [arguments]
+opticdeck act [--state-dir DIR] --action ACTION [--node ID --text TEXT --key KEY --duration-ms MS --x N --y N]
+             [--expect-name NAME] [--expect-revision N]
+opticdeck host-view [--x11] [--allow-input] [--monitor-scale SCALE]
+opticdeck hotkeys|mcp|rustdesk [--state-dir DIR]`)
 		return nil
 	default:
 		return fmt.Errorf("unknown command %q", os.Args[1])

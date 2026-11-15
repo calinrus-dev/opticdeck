@@ -33,6 +33,12 @@ connection can hold input at a time. The host viewer has no application,
 semantic action or clipboard routes. Close the foreground command or stop
 the share from your desktop to end the capture.
 
+MCP uses local stdio and the selected virtual session's authenticated state
+file. A client you connect can read semantic controls, view screenshots, and
+send input inside that session. Screen captures can contain private content.
+The viewer saves a contact sheet only on request. The RustDesk launcher opens
+an outgoing client. RustDesk manages the remote connection and approval.
+
 ## Properties to preserve
 
 - Keep graphical input, accessibility queries, and clipboard operations inside

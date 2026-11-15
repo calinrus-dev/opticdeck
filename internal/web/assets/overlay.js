@@ -1,4 +1,5 @@
 import RFB from './novnc/core/rfb.js';
+import { mountContactSheet } from './contact-sheet.js';
 
 const $ = id => document.getElementById(id);
 const overlay = $('semantic-overlay');
@@ -7,6 +8,11 @@ const viewport = $('viewport');
 const frame = $('scaled-frame');
 const actionLog = $('action-log');
 const latestAction = $('latest-action');
+const pauseButton = $('pause-agent');
+const takeoverButton = $('takeover');
+const stopButton = $('stop-session');
+const stopDialog = $('stop-dialog');
+const appOutline = $('app-outline');
 const elements = new Map();
 const nodes = new Map();
 const pending = new Map();
@@ -38,11 +44,16 @@ let rfbReady = false;
 let reconnectTimer;
 let rfbTimer;
 let stopped = false;
+let sessionStopped = false;
+let pausePending = false;
+let takeoverPending = false;
+let stopPending = false;
 let revision = 0;
 let width = 1280;
 let height = 800;
 let haveSnapshot = false;
 let syncPending = false;
+let staleNotice = false;
 let control = { paused: false, owner: '' };
 let lease = '';
 let reconnectAttempt = 0;
@@ -53,6 +64,13 @@ let dirty = new Map();
 let composing = new Set();
 let highlighted;
 let highlightTimer;
+let windowChoices = '';
+const contactSheet = mountContactSheet(() => rfbReady ? $('rfb-screen').querySelector('canvas') : null);
+
+function setRFBReady(ready) {
+  rfbReady = ready;
+  contactSheet.setAvailable(ready);
+}
 
 function endpoint(path) {
   const url = new URL(path, location.href);
@@ -84,12 +102,29 @@ function updateConnectedStatus() {
   else setStatus('Syncing desktop…', 'syncing');
 }
 
+const agentPhases = new Map([
+  ['idle', 'Idle'], ['working', 'Working'], ['waiting', 'Waiting'], ['done', 'Done'], ['error', 'Error'],
+]);
+
+function setAgentStatus(status) {
+  const phase = agentPhases.get(status?.phase);
+  const panel = $('agent-status');
+  if (phase) panel.dataset.phase = status.phase;
+  else delete panel.dataset.phase;
+  const phaseText = phase || 'No update yet';
+  const detail = phase && typeof status.label === 'string' ? status.label.replace(/\s+/g, ' ').trim() : '';
+  if ($('agent-phase').textContent !== phaseText) $('agent-phase').textContent = phaseText;
+  if ($('agent-label').textContent !== detail) $('agent-label').textContent = detail;
+  $('agent-label').hidden = !detail;
+}
+
 function showError(message) {
   $('error').textContent = message;
   $('error').hidden = false;
 }
 
 function clearError() {
+  staleNotice = false;
   $('error').hidden = true;
   $('error').textContent = '';
 }
@@ -97,6 +132,27 @@ function clearError() {
 function send(message) {
   if (!online()) throw new Error('Disconnected from OpticDeck');
   socket.send(JSON.stringify(message));
+}
+
+class StaleObservationError extends Error {
+  constructor() {
+    super('The desktop changed. Review the refreshed controls and try again.');
+  }
+}
+
+function requestSnapshot() {
+  if (syncPending || !online()) return;
+  syncPending = true;
+  send({ type: 'snapshot' });
+}
+
+function reportStale() {
+  const error = new StaleObservationError();
+  staleNotice = true;
+  clearActionHighlight();
+  showError(error.message);
+  requestSnapshot();
+  return error;
 }
 
 function request(message) {
@@ -125,15 +181,27 @@ function rejectPending() {
   pending.clear();
 }
 
-function perform(node, action, extra = {}) {
-  if (!haveSnapshot || syncPending) return Promise.reject(new Error('The desktop controls are syncing'));
+function observedName(id) {
+  const node = nodes.get(id);
+  return node ? node.name ?? '' : null;
+}
+
+function perform(node, action, extra = {}, expectedName = observedName(node)) {
+  if (!haveSnapshot || syncPending) {
+    return Promise.reject(staleNotice ? new StaleObservationError() : new Error('The desktop controls are syncing'));
+  }
   if (control.paused) return Promise.reject(new Error('Manual control paused the agent'));
+  if (node && expectedName === null) return Promise.reject(reportStale());
+  const message = { type: 'action', node, action, ...extra };
+  if (node) message.expect_name = expectedName;
+  else if (Number.isFinite(extra.x) && Number.isFinite(extra.y)) message.expect_revision = revision;
+  if (staleNotice) clearError();
   highlightAction(node);
-  return request({ type: 'action', node, action, ...extra });
+  return request(message);
 }
 
 function run(promise) {
-  promise.catch(error => showError(error.message));
+  promise.catch(error => { if (!(error instanceof StaleObservationError)) showError(error.message); });
 }
 
 function scale() {
@@ -191,24 +259,33 @@ function flushText(id) {
   textTimers.delete(id);
   const previous = textWrites.get(id);
   if (!dirty.has(id)) return previous?.promise || Promise.resolve();
-  const value = dirty.get(id);
+  const draft = dirty.get(id);
   dirty.delete(id);
-  if (previous?.text === value) return previous.promise;
-  const write = { text: value, promise: null, settled: false, remoteBefore: '' };
+  const { text, name } = draft;
+  if (previous?.text === text && previous.name === name) return previous.promise;
+  const write = { ...draft, promise: null, settled: false, remoteBefore: '' };
   // Serializing each field preserves A -> B -> A, including edits made while
   // an earlier write is still in flight. Repeated change/blur shares its promise.
-  write.promise = (previous?.promise || Promise.resolve()).catch(() => {}).then(() => {
+  write.promise = (previous?.promise || Promise.resolve()).catch(error => {
+    if (error instanceof StaleObservationError && previous.name === name) throw error;
+  }).then(() => {
     write.remoteBefore = nodes.get(id)?.value || '';
-    return perform(id, 'set_text', { text: value });
+    return perform(id, 'set_text', { text }, name);
   }).then(result => {
     write.settled = true;
     const remote = nodes.get(id)?.value || '';
-    if (textWrites.get(id) === write && remote !== write.remoteBefore && remote !== value) textWrites.delete(id);
+    if (textWrites.get(id) === write && remote !== write.remoteBefore && remote !== text) textWrites.delete(id);
     return result;
   }, error => {
     if (textWrites.get(id) === write) {
       textWrites.delete(id);
-      if (online() && nodes.has(id) && !dirty.has(id) && elements.get(id)?.value === value) dirty.set(id, value);
+      const element = elements.get(id);
+      if (error instanceof StaleObservationError) {
+        if (dirty.get(id)?.name === name) dirty.delete(id);
+        if (!dirty.has(id) && element) element.value = element.type === 'password' ? '' : nodes.get(id)?.value || '';
+      } else if (online() && nodes.has(id) && !dirty.has(id) && element?.value === text) {
+        dirty.set(id, draft);
+      }
     }
     throw error;
   });
@@ -217,7 +294,7 @@ function flushText(id) {
 }
 
 function queueText(id, element) {
-  dirty.set(id, element.value);
+  dirty.set(id, { text: element.value, name: observedName(id) });
   clearTimeout(textTimers.get(id));
   if (!composing.has(id)) {
     textTimers.set(id, setTimeout(() => run(flushText(id)), 180));
@@ -241,9 +318,10 @@ function onKey(event, id, editable) {
   event.stopPropagation();
   const key = keyNames[event.key] || event.key;
   const prefix = [event.ctrlKey && 'Ctrl', event.altKey && 'Alt', event.shiftKey && 'Shift', event.metaKey && 'Super'].filter(Boolean);
+  const expectedName = observedName(id);
   run(flushText(id).then(() => chord || event.shiftKey
-    ? perform(id, 'shortcut', { key: [...prefix, key].join('+') })
-    : perform(id, 'press_key', { key })));
+    ? perform(id, 'shortcut', { key: [...prefix, key].join('+') }, expectedName)
+    : perform(id, 'press_key', { key }, expectedName)));
 }
 
 function nativePoint(event) {
@@ -276,19 +354,27 @@ function createElement(node, role, tag) {
     // Collapse the two click events preceding dblclick into one double action.
     // Programmatic element.click() has detail=0 and can dispatch immediately.
     const point = node.vision_fallback ? nativePoint(event) : {};
-    clearTimeout(clickTimers.get(node.id));
-    if (event.detail === 0) run(perform(node.id, 'click', point));
-    else if (event.detail === 1) clickTimers.set(node.id, setTimeout(() => {
+    const name = observedName(node.id);
+    clearTimeout(clickTimers.get(node.id)?.timer);
+    if (event.detail === 0) {
       clickTimers.delete(node.id);
-      run(perform(node.id, 'click', point));
-    }, 240));
+      run(perform(node.id, 'click', point, name));
+    } else if (event.detail === 1) {
+      const timer = setTimeout(() => {
+        clickTimers.delete(node.id);
+        run(perform(node.id, 'click', point, name));
+      }, 240);
+      clickTimers.set(node.id, { timer, name });
+    }
   });
   element.addEventListener('dblclick', event => {
     event.preventDefault();
     event.stopPropagation();
-    clearTimeout(clickTimers.get(node.id));
+    const firstClick = clickTimers.get(node.id);
+    clearTimeout(firstClick?.timer);
     clickTimers.delete(node.id);
-    run(perform(node.id, 'double_click', node.vision_fallback ? nativePoint(event) : {}));
+    run(perform(node.id, 'double_click', node.vision_fallback ? nativePoint(event) : {},
+      firstClick ? firstClick.name : observedName(node.id)));
   });
   element.addEventListener('contextmenu', event => {
     event.preventDefault();
@@ -300,7 +386,7 @@ function createElement(node, role, tag) {
     element.addEventListener('compositionstart', () => composing.add(node.id));
     element.addEventListener('compositionend', () => { composing.delete(node.id); queueText(node.id, element); });
     element.addEventListener('input', () => queueText(node.id, element));
-    element.addEventListener('change', () => { dirty.set(node.id, element.value); run(flushText(node.id)); });
+    element.addEventListener('change', () => run(flushText(node.id)));
     element.addEventListener('blur', () => run(flushText(node.id)));
   }
   return element;
@@ -330,6 +416,7 @@ function upsert(node) {
   element.dataset.semanticRole = role;
   element.dataset.parentId = node.parent || '';
   element.dataset.window = String(node.window || 0);
+  element.classList.toggle('window-outline', node.window > 0 && element.dataset.window === appOutline.value);
   element.dataset.actions = (node.actions || []).join(',');
   element.dataset.states = (node.states || []).join(',');
   attribute(element, 'data-shortcut', node.shortcut);
@@ -388,23 +475,46 @@ function remove(id) {
   textWrites.delete(id);
   clearTimeout(textTimers.get(id));
   textTimers.delete(id);
-  clearTimeout(clickTimers.get(id));
+  clearTimeout(clickTimers.get(id)?.timer);
   clickTimers.delete(id);
   composing.delete(id);
 }
 
 function updateHierarchy() {
   const children = new Map();
+  const windows = new Map();
   for (const node of nodes.values()) {
-    if (node.parent && nodes.has(node.parent)) {
+    const parent = nodes.get(node.parent);
+    if (parent) {
       if (!children.has(node.parent)) children.set(node.parent, []);
       children.get(node.parent).push(`native-${node.id}`);
+    }
+    if (!Number.isSafeInteger(node.window) || node.window <= 0) continue;
+    if (!windows.has(node.window)) windows.set(node.window, '');
+    if (!windows.get(node.window) && parent?.window !== node.window &&
+        (node.vision_fallback || normalizeRole(node) === 'dialog')) {
+      windows.set(node.window, String(node.name || '').replace(/\s+/g, ' ').trim().slice(0, 80));
     }
   }
   for (const [id, element] of elements) {
     // aria-owns mirrors the AT-SPI hierarchy without nesting absolute boxes,
     // which would otherwise apply parent coordinates a second time.
     attribute(element, 'aria-owns', children.get(id)?.join(' '));
+  }
+  const options = [...windows].map(([id, name]) => [String(id), name || `Window ${id}`]);
+  const serialized = JSON.stringify(options);
+  if (serialized === windowChoices) return;
+  windowChoices = serialized;
+  const selected = appOutline.value;
+  appOutline.replaceChildren(new Option('None', ''), ...options.map(([id, name]) => new Option(name, id)));
+  if (options.some(([id]) => id === selected)) appOutline.value = selected;
+  updateWindowOutline();
+  updateSessionControls();
+}
+
+function updateWindowOutline() {
+  for (const element of elements.values()) {
+    element.classList.toggle('window-outline', appOutline.value !== '' && element.dataset.window === appOutline.value);
   }
 }
 
@@ -425,16 +535,14 @@ function syncSnapshot(message) {
   updateHierarchy();
   updateMetrics();
   setControl(message.control || control);
+  setAgentStatus(message.agent_status);
   updateConnectedStatus();
-  clearError();
+  if (!staleNotice) clearError();
 }
 
 function syncDiff(message) {
   if (!haveSnapshot || syncPending || message.base !== revision) {
-    if (!syncPending) {
-      syncPending = true;
-      send({ type: 'snapshot' });
-    }
+    requestSnapshot();
     return;
   }
   for (const id of message.remove || []) remove(id);
@@ -445,20 +553,34 @@ function syncDiff(message) {
   updateMetrics();
 }
 
+function updateSessionControls() {
+  const available = !stopped && online() && haveSnapshot;
+  const manual = !!control.owner;
+  const pendingControl = pausePending || takeoverPending;
+  pauseButton.disabled = !available || manual || pendingControl;
+  takeoverButton.disabled = !available || (control.paused && !isOwner()) || pendingControl;
+  stopButton.disabled = !available || stopPending;
+  appOutline.disabled = !available || isOwner() || appOutline.options.length < 2;
+}
+
 function setControl(next) {
   const previousOwner = isOwner();
   const wasPaused = control.paused;
   control = { paused: !!next.paused, owner: next.owner || '' };
   const owner = isOwner();
   if (!owner) lease = '';
-  $('takeover').disabled = !online() || !haveSnapshot || (control.paused && !owner);
-  $('takeover').textContent = owner ? 'Return control to agent' : control.paused ? 'Another tab has control' : 'Take control';
-  $('takeover').classList.toggle('active', owner);
-  $('mode').textContent = owner ? 'Manual control · Agent paused' : control.paused ? 'Agent paused in another tab' : 'Observer mode · VNC input off';
+  $('pause-agent-label').textContent = control.paused && !control.owner ? 'Resume agent' : 'Pause agent';
+  takeoverButton.textContent = owner ? 'Return control to agent' : control.owner ? 'Another tab has control' : 'Take control';
+  takeoverButton.classList.toggle('active', owner);
+  if (owner) $('mode').textContent = 'Manual control · Agent paused';
+  else if (control.owner) $('mode').textContent = 'Agent paused · Another tab has control';
+  else if (control.paused) $('mode').textContent = 'Agent paused · VNC input off';
+  else $('mode').textContent = 'Observer mode · VNC input off';
   $('mode').classList.toggle('manual', control.paused);
   overlay.classList.toggle('manual', owner);
   for (const id of ['clipboard', 'clipboard-read', 'clipboard-write']) $(id).disabled = !owner || !online();
   if (!owner) $('clipboard').value = '';
+  updateSessionControls();
   if (rfb) rfb.viewOnly = !owner;
   if (previousOwner !== owner || wasPaused !== control.paused) {
     // The daemon revokes every RFB connection when ownership changes. Creating
@@ -469,7 +591,7 @@ function setControl(next) {
 
 const actionLabels = new Map([
   ['click', 'Click'], ['double_click', 'Double click'], ['right_click', 'Right click'],
-  ['focus', 'Focus'], ['set_text', 'Edit text'], ['press_key', 'Key press'], ['shortcut', 'Shortcut'],
+  ['focus', 'Focus'], ['set_text', 'Edit text'], ['press_key', 'Key press'], ['hold_key', 'Hold key'], ['shortcut', 'Shortcut'],
 ]);
 const namedTargetRoles = new Map([
   ['button', 'Button'], ['checkbox', 'Checkbox'], ['radio', 'Radio button'], ['menuitem', 'Menu item'],
@@ -477,20 +599,22 @@ const namedTargetRoles = new Map([
   ['link', 'Link'], ['slider', 'Slider'],
 ]);
 
-function actionTarget(id) {
+function actionTarget(id, targetName) {
   if (!id) return '';
   const node = nodes.get(id);
-  if (!node) return 'Control';
-  if ((node.states || []).includes('protected') || String(node.role).includes('password')) return 'Protected field';
-  if (node.vision_fallback) return 'Desktop region';
-  const role = normalizeRole(node);
-  if (isEditable(node, role)) return 'Text field';
-  const fallback = namedTargetRoles.get(role);
-  if (!fallback) return 'Control';
+  let fallback = 'Control';
+  if (node) {
+    if ((node.states || []).includes('protected') || String(node.role).includes('password')) return 'Protected field';
+    if (node.vision_fallback) return 'Desktop region';
+    const role = normalizeRole(node);
+    if (isEditable(node, role)) return 'Text field';
+    if (!namedTargetRoles.has(role)) return fallback;
+    fallback = namedTargetRoles.get(role);
+  }
   // Only use names of controls normally labelled with static UI copy. Native
   // document titles, editable labels, values and action arguments stay out of the log.
-  const name = String(node.name || '').replace(/\s+/g, ' ').trim();
-  if (!name || (node.value && name.includes(node.value))) return fallback;
+  const name = (typeof targetName === 'string' ? targetName : node?.name || '').replace(/\s+/g, ' ').trim();
+  if (!name || (node?.value && name.includes(node.value))) return fallback;
   const characters = Array.from(name);
   return characters.length > 96 ? `${characters.slice(0, 95).join('')}…` : name;
 }
@@ -511,7 +635,7 @@ function highlightAction(id, failed = false) {
 
 function addLog(message) {
   const action = actionLabels.get(message.action) || 'Desktop action';
-  const target = actionTarget(message.node);
+  const target = actionTarget(message.node, message.target_name);
   const failed = message.ok === false;
   const label = failed ? `${action} failed` : action;
   latestAction.hidden = false;
@@ -547,7 +671,7 @@ function addLog(message) {
 
 function connectRFB(delay = 0) {
   clearTimeout(rfbTimer);
-  rfbReady = false;
+  setRFBReady(false);
   if (rfb) {
     const old = rfb;
     rfb = null;
@@ -568,7 +692,7 @@ function connectRFB(delay = 0) {
       connection.focusOnClick = isOwner();
       connection.addEventListener('connect', () => {
         if (rfb !== connection) return;
-        rfbReady = true;
+        setRFBReady(true);
         scale();
         updateConnectedStatus();
       });
@@ -608,6 +732,7 @@ function connect() {
         case 'snapshot': syncSnapshot(message); break;
         case 'diff': syncDiff(message); break;
         case 'control': setControl(message.control || message); break;
+        case 'agent_status': setAgentStatus(message.status); break;
         case 'lease':
           if (isOwner() && typeof message.token === 'string') {
             lease = message.token;
@@ -617,12 +742,14 @@ function connect() {
         case 'log': addLog(message); break;
         case 'result': {
           const entry = pending.get(message.id);
+          const stale = message.ok === false && message.code === 'stale_observation';
+          const error = stale ? reportStale() : new Error(message.error || 'Could not run the action');
           if (entry) {
             clearTimeout(entry.timer);
             pending.delete(message.id);
             if (message.ok) entry.resolve(message);
-            else entry.reject(new Error(message.error || 'Could not run the action'));
-          } else if (message.ok === false) showError(message.error || 'Could not run the action');
+            else entry.reject(error);
+          } else if (message.ok === false && !stale) showError(error.message);
           break;
         }
         case 'clipboard': if (isOwner()) $('clipboard').value = message.text || ''; break;
@@ -635,12 +762,13 @@ function connect() {
   socket.addEventListener('close', event => {
     haveSnapshot = false;
     syncPending = false;
-    rfbReady = false;
+    setRFBReady(false);
     lease = '';
     overlay.classList.add('disconnected');
     clearActionHighlight();
-    $('takeover').disabled = true;
-    $('mode').textContent = 'Waiting for session';
+    updateSessionControls();
+    setAgentStatus();
+    $('mode').textContent = sessionStopped ? 'Session stopped' : 'Waiting for session';
     $('mode').classList.remove('manual');
     $('metrics').textContent = 'Waiting for snapshot';
     for (const id of ['clipboard', 'clipboard-read', 'clipboard-write']) $(id).disabled = true;
@@ -649,7 +777,7 @@ function connect() {
     textWrites.clear();
     for (const timer of textTimers.values()) clearTimeout(timer);
     textTimers.clear();
-    for (const timer of clickTimers.values()) clearTimeout(timer);
+    for (const { timer } of clickTimers.values()) clearTimeout(timer);
     clickTimers.clear();
     dirty.clear();
     if (rfb) { const old = rfb; rfb = null; old.disconnect(); }
@@ -662,13 +790,107 @@ function connect() {
   socket.addEventListener('error', () => showError('Could not connect. Check that OpticDeck is running and that you opened the current session URL.'));
 }
 
+async function postSession(path, data) {
+  const headers = {};
+  if (token) headers.Authorization = `Bearer ${token}`;
+  if (data !== undefined) headers['Content-Type'] = 'application/json';
+  const response = await fetch(path, {
+    method: 'POST', headers, body: data === undefined ? undefined : JSON.stringify(data), signal: AbortSignal.timeout(8000),
+  });
+  if (!response.ok) throw new Error(`Request failed (${response.status})`);
+  return response.json();
+}
+
+pauseButton.addEventListener('click', async () => {
+  if (pauseButton.disabled) return;
+  pausePending = true;
+  updateSessionControls();
+  try {
+    const result = await postSession('/api/control', { paused: !control.paused });
+    if (result.ok !== true || !result.control) throw new Error('Invalid control response');
+    if (online() && haveSnapshot) setControl(result.control);
+    clearError();
+  } catch {
+    showError('Could not update the agent pause. Check the connection and try again.');
+  } finally {
+    pausePending = false;
+    updateSessionControls();
+  }
+});
+
+stopButton.addEventListener('click', () => {
+  if (stopButton.disabled || stopDialog.open) return;
+  $('stop-error').hidden = true;
+  stopDialog.showModal();
+});
+stopDialog.addEventListener('cancel', event => { if (stopPending) event.preventDefault(); });
+$('confirm-stop').addEventListener('click', async () => {
+  if (stopPending) return;
+  stopPending = true;
+  $('stop-error').hidden = true;
+  $('cancel-stop').disabled = true;
+  $('confirm-stop').disabled = true;
+  updateSessionControls();
+  try {
+    const result = await postSession('/api/stop');
+    if (result.ok !== true) throw new Error('Invalid stop response');
+    sessionStopped = true;
+    stopped = true;
+    haveSnapshot = false;
+    setRFBReady(false);
+    clearTimeout(reconnectTimer);
+    clearTimeout(rfbTimer);
+    socket?.close(1000, 'Session stopped');
+    overlay.classList.add('disconnected');
+    clearActionHighlight();
+    setStatus('Session stopped', 'offline');
+    $('mode').textContent = 'Session stopped';
+    setAgentStatus();
+    clearError();
+    stopDialog.close();
+  } catch {
+    $('stop-error').hidden = false;
+  } finally {
+    stopPending = false;
+    $('cancel-stop').disabled = false;
+    $('confirm-stop').disabled = false;
+    updateSessionControls();
+  }
+});
+
+document.addEventListener('keydown', event => {
+  if (event.defaultPrevented || event.isComposing || event.repeat || stopDialog.open ||
+      !event.altKey || !event.shiftKey || event.ctrlKey || event.metaKey) return;
+  const target = event.target;
+  if (target instanceof HTMLElement && (target.isContentEditable ||
+      target.matches('textarea, select, input:not([type="checkbox"]):not([type="radio"]), [role="textbox"], [role="combobox"]'))) return;
+  const button = event.code === 'KeyP' ? pauseButton : event.key === 'Escape' ? stopButton : null;
+  if (button?.disabled === false) {
+    event.preventDefault();
+    event.stopPropagation();
+    button.click();
+  }
+}, true);
+
 $('hitboxes').addEventListener('change', event => overlay.classList.toggle('show-hitboxes', event.target.checked));
-$('takeover').addEventListener('click', () => {
-  if (control.paused && !isOwner()) return;
+appOutline.addEventListener('change', updateWindowOutline);
+takeoverButton.addEventListener('click', async () => {
+  if (takeoverButton.disabled) return;
   // Commit any field edit before pausing. Once takeover is granted no semantic
   // action is allowed, including actions already waiting in this browser.
-  const edits = [...new Set([...dirty.keys(), ...textWrites.keys()])].map(flushText);
-  run(Promise.all(edits).then(() => request({ type: 'takeover', paused: !isOwner() })));
+  const paused = !isOwner();
+  takeoverPending = true;
+  updateSessionControls();
+  try {
+    const edits = [...new Set([...dirty.keys(), ...textWrites.keys()])].map(flushText);
+    await Promise.all(edits);
+    await request({ type: 'takeover', paused });
+  } catch (error) {
+    showError(error.message);
+  } finally {
+    takeoverPending = false;
+    updateSessionControls();
+  }
 });
 $('clipboard-write').addEventListener('click', () => {
   if (isOwner()) run(request({ type: 'clipboard', text: $('clipboard').value }));
@@ -683,7 +905,7 @@ window.addEventListener('pagehide', () => {
   if (socket) socket.close(1000, 'Tab closed');
   if (rfb) rfb.disconnect();
 });
-window.addEventListener('pageshow', event => { if (event.persisted) { stopped = false; connect(); } });
+window.addEventListener('pageshow', event => { if (event.persisted && !sessionStopped) { stopped = false; connect(); } });
 
 scale();
 connect();

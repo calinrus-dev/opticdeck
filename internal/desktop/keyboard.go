@@ -1,9 +1,11 @@
 package desktop
 
 import (
+	"context"
 	"errors"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/jezek/xgb/xproto"
@@ -76,7 +78,13 @@ func (d *Desktop) keymap() (map[uint32]mappedKey, error) {
 	return result, nil
 }
 
-func (d *Desktop) PressKey(key string) error { return d.shortcut([]string{key}) }
+func (d *Desktop) PressKey(key string) error {
+	return d.shortcut(context.Background(), []string{key}, 0)
+}
+
+func (d *Desktop) HoldKey(ctx context.Context, key string, duration time.Duration) error {
+	return d.shortcut(ctx, []string{key}, duration)
+}
 
 func (d *Desktop) Shortcut(chord string) error {
 	if len(chord) > 256 {
@@ -86,15 +94,18 @@ func (d *Desktop) Shortcut(chord string) error {
 	if len(parts) > 8 {
 		return errors.New("too many shortcut modifiers")
 	}
-	return d.shortcut(parts)
+	return d.shortcut(context.Background(), parts, 0)
 }
 
-func (d *Desktop) shortcut(parts []string) error {
+func (d *Desktop) shortcut(ctx context.Context, parts []string, duration time.Duration) error {
 	if len(parts) == 0 {
 		return errors.New("empty shortcut")
 	}
 	d.inputMu.Lock()
 	defer d.inputMu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	mapping, err := d.keymap()
 	if err != nil {
 		return err
@@ -145,6 +156,15 @@ func (d *Desktop) shortcut(parts []string) error {
 		pressed = append(pressed, code)
 		if err := d.fake(xproto.KeyPress, byte(code), 0, 0); err != nil {
 			return err
+		}
+	}
+	if duration > 0 {
+		timer := time.NewTimer(duration)
+		defer timer.Stop()
+		select {
+		case <-ctx.Done():
+			return ctx.Err() // The deferred releases keep the key from sticking.
+		case <-timer.C:
 		}
 	}
 	for len(pressed) > 0 {

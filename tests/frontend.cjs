@@ -10,6 +10,7 @@ const assets = path.resolve(__dirname, '../internal/web/assets');
 const fixture = {
   type: 'snapshot', revision: 1, width: 1280, height: 800,
   control: { paused: false, owner: '' },
+  agent_status: { phase: 'idle', label: 'Ready for a task' },
   nodes: [
     { id: 'win', role: 'frame', name: 'Demo', bounds: { x: 0, y: 0, width: 1000, height: 700 }, window: 1, z: 1, depth: 0, states: [], actions: [] },
     { id: 'button', parent: 'win', role: 'push button', name: 'Guardar', bounds: { x: 100, y: 100, width: 120, height: 35 }, window: 1, z: 1, depth: 1, states: ['enabled'], actions: ['click'] },
@@ -53,7 +54,14 @@ function installMock(snapshot) {
       if (new URL(this.url).pathname !== '/ws') return;
       const message = JSON.parse(data);
       window.__actions.push(message);
-      if (message.type === 'snapshot') { this.emit(snapshot); return; }
+      if (message.type === 'snapshot') { this.emit(window.__snapshot); return; }
+      if (message.type === 'action' && message.node && window.__validateObservations) {
+        const target = window.__snapshot.nodes.find(node => node.id === message.node);
+        if (!target || (target.name || '') !== message.expect_name) {
+          this.emit({ type: 'result', id: message.id, ok: false, code: 'stale_observation', error: 'raw backend detail' });
+          return;
+        }
+      }
       if (message.type === 'takeover') {
         this.emit({ type: 'control', control: { paused: message.paused, owner: message.paused ? new URL(this.url).searchParams.get('client') : '' } });
         if (message.paused) this.emit({ type: 'lease', token: 'test-private-lease' });
@@ -80,6 +88,159 @@ function installMock(snapshot) {
   window.WebSocket = MockWebSocket;
 }
 
+async function checkStaleObservation(browser, origin) {
+  const page = await browser.newPage();
+  try {
+    await page.addInitScript(installMock, fixture);
+    await page.goto(`${origin}/?token=fixture`);
+    await page.getByRole('button', { name: 'Guardar', exact: true }).waitFor();
+    await page.evaluate(() => {
+      window.__validateObservations = true;
+      // A diff can reach the browser before its double-click debounce expires.
+      document.getElementById('native-button').dispatchEvent(new MouseEvent('click', { detail: 1, bubbles: true }));
+      const changed = { ...__snapshot.nodes[1], name: 'e4 white pawn' };
+      __snapshot = { ...__snapshot, revision: 2, nodes: __snapshot.nodes.map(node => node.id === changed.id ? changed : node) };
+      __ws.emit({ type: 'diff', base: 1, revision: 2, upsert: [changed], remove: [] });
+    });
+    const notice = page.getByRole('alert').filter({ hasText: 'The desktop changed' });
+    await notice.waitFor();
+    const stateAfterStale = await page.evaluate(() => ({
+      clicks: __actions.filter(message => message.action === 'click').map(message => message.expect_name),
+      refreshes: __actions.filter(message => message.type === 'snapshot').length,
+    }));
+    assert.deepEqual(stateAfterStale, { clicks: ['Guardar'], refreshes: 1 });
+    assert.doesNotMatch(await notice.textContent(), /raw backend detail/);
+    await page.getByRole('button', { name: 'e4 white pawn', exact: true }).click();
+    await page.waitForFunction(() => __actions.filter(message => message.action === 'click').length === 2);
+    assert.equal(await page.evaluate(() => __actions.findLast(message => message.action === 'click').expect_name), 'e4 white pawn');
+    await notice.waitFor({ state: 'hidden' });
+
+    await page.evaluate(() => {
+      const nextButton = { ...__snapshot.nodes[1], name: 'e4 empty' };
+      __ws.emit({ type: 'diff', base: 2, revision: 3, upsert: [nextButton], remove: [] });
+      __ws.emit({ type: 'log', action: 'click', node: 'button', target_name: 'e4 white pawn', ok: true });
+      const input = document.getElementById('native-input');
+      input.value = 'Discard this old draft';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      const changed = { ...__snapshot.nodes[2], name: 'Updated name', value: 'New native value' };
+      __snapshot = {
+        ...__snapshot, revision: 4,
+        nodes: __snapshot.nodes.map(node => [nextButton, changed].find(item => item.id === node.id) || node),
+      };
+    });
+    assert.equal(await page.locator('#latest-action-text').textContent(), 'Click · e4 white pawn');
+    await notice.waitFor();
+    const input = page.getByRole('textbox', { name: 'Updated name', exact: true });
+    await input.waitFor();
+    assert.equal(await input.inputValue(), 'New native value');
+    await input.dispatchEvent('change');
+    await input.dispatchEvent('blur');
+    assert.deepEqual(await page.evaluate(() => __actions.filter(message => message.action === 'set_text').map(message => message.expect_name)), ['Nombre']);
+    await input.fill('New observed draft');
+    await page.waitForFunction(() => __actions.filter(message => message.action === 'set_text').length === 2);
+    assert.equal(await page.evaluate(() => __actions.findLast(message => message.action === 'set_text').expect_name), 'Updated name');
+  } finally {
+    await page.close();
+  }
+}
+
+async function checkContactSheet(browser, origin) {
+  const page = await browser.newPage();
+  let downloads = 0;
+  page.on('download', () => { downloads++; });
+  try {
+    await page.route('**/novnc/core/rfb.js', route => route.fulfill({
+      contentType: 'text/javascript',
+      body: `export default class FixtureRFB extends EventTarget {
+        constructor(container) {
+          super();
+          const canvas = document.createElement('canvas');
+          canvas.width = 480;
+          canvas.height = 300;
+          const context = canvas.getContext('2d');
+          context.fillStyle = '#285879';
+          context.fillRect(0, 0, canvas.width, canvas.height);
+          container.appendChild(canvas);
+          setTimeout(() => this.dispatchEvent(new Event('connect')), 5);
+        }
+        disconnect() {}
+      }`,
+    }));
+    await page.addInitScript(installMock, fixture);
+    await page.goto(`${origin}/?token=fixture`);
+    await page.getByRole('button', { name: 'Capture contact sheet', exact: true }).click();
+    const preview = page.getByRole('dialog', { name: 'Contact sheet' });
+    await preview.waitFor();
+    await page.waitForFunction(() => document.querySelector('#contact-sheet-image').naturalWidth > 0);
+    const image = preview.getByRole('img', { name: /six sequential|6 sequential/ });
+    assert.equal(await image.isVisible(), true);
+    assert.deepEqual(await image.evaluate(img => [img.naturalWidth, img.naturalHeight]), [1488, 684]);
+    const save = preview.getByRole('link', { name: 'Save JPEG' });
+    assert.match(await save.getAttribute('href'), /^blob:/);
+    assert.match(await save.getAttribute('download'), /^opticdeck-contact-sheet-.*\.jpg$/);
+    assert.equal(downloads, 0, 'the preview does not write a file');
+    await preview.getByRole('button', { name: 'Close', exact: true }).click();
+    await preview.waitFor({ state: 'hidden' });
+
+    const sheet = await page.evaluate(async () => {
+      const { captureContactSheet } = await import('/contact-sheet.js');
+      const source = document.createElement('canvas');
+      source.width = 1920;
+      source.height = 1080;
+      const sourceContext = source.getContext('2d');
+      const colors = [[240, 20, 25], [20, 235, 30], [35, 45, 235], [225, 218, 32]];
+      function paint(index) {
+        const color = colors[index];
+        sourceContext.fillStyle = `rgb(${color.join(',')})`;
+        sourceContext.fillRect(0, 0, source.width, source.height);
+      }
+      paint(0);
+      const result = await captureContactSheet(() => source, {
+        frameCount: 4, intervalMs: 150,
+        onFrame: ({ number }) => { if (number < colors.length) paint(number); },
+      });
+      const bytes = new Uint8Array(await result.blob.arrayBuffer());
+      const decoded = await createImageBitmap(result.blob);
+      const context = result.canvas.getContext('2d');
+      context.drawImage(decoded, 0, 0);
+      const pixels = result.frames.map(({ x, y, width, height }) =>
+        Array.from(context.getImageData(x + width / 2, y + height / 2, 1, 1).data).slice(0, 3));
+      const resolution = [decoded.width, decoded.height];
+      decoded.close();
+      const controller = new AbortController();
+      let canceledFrames = 0;
+      let canceled;
+      try {
+        await captureContactSheet(() => source, {
+          signal: controller.signal,
+          onFrame: () => { canceledFrames++; controller.abort(); },
+        });
+      } catch (error) {
+        canceled = error.name;
+      }
+      return {
+        colors, pixels, resolution, canceled, canceledFrames, mime: result.blob.type, byteLength: bytes.length,
+        jpegMarkers: [...bytes.slice(0, 2), ...bytes.slice(-2)], offsets: result.frames.map(frame => frame.atMs),
+        order: result.frames.map(frame => frame.number),
+      };
+    });
+    assert.deepEqual(sheet.resolution, [996, 624]);
+    assert.deepEqual(sheet.order, [1, 2, 3, 4]);
+    assert.equal(sheet.offsets[0], 0);
+    assert.ok(sheet.offsets.slice(1).every((time, index) => time - sheet.offsets[index] >= 145), 'frames use sequential monotonic sampling');
+    assert.equal(sheet.mime, 'image/jpeg');
+    assert.ok(sheet.byteLength > 1000);
+    assert.deepEqual(sheet.jpegMarkers, [0xff, 0xd8, 0xff, 0xd9]);
+    sheet.pixels.forEach((pixel, index) => pixel.forEach((channel, component) => {
+      assert.ok(Math.abs(channel - sheet.colors[index][component]) <= 8, `frame ${index + 1} preserves its own source pixels`);
+    }));
+    assert.equal(sheet.canceled, 'AbortError');
+    assert.equal(sheet.canceledFrames, 1);
+  } finally {
+    await page.close();
+  }
+}
+
 (async () => {
   const server = http.createServer((request, response) => {
     const pathname = new URL(request.url, 'http://fixture').pathname;
@@ -103,7 +264,17 @@ function installMock(snapshot) {
     });
     const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
     const errors = [];
+    const controls = [];
     page.on('pageerror', error => errors.push(error.message));
+    await page.route(/\/api\/(control|stop)$/, async route => {
+      const request = route.request();
+      const endpoint = new URL(request.url()).pathname;
+      controls.push({ endpoint, method: request.method(), auth: request.headers().authorization, data: request.postDataJSON() });
+      const result = endpoint === '/api/control'
+        ? { ok: true, control: { paused: request.postDataJSON().paused, owner: '' } }
+        : { ok: true };
+      await route.fulfill({ json: result });
+    });
     await page.addInitScript(installMock, fixture);
     await page.goto(`http://127.0.0.1:${server.address().port}/?token=fixture&keep=1#desktop-panel`);
     await page.waitForSelector('#native-button');
@@ -113,6 +284,31 @@ function installMock(snapshot) {
     await page.waitForSelector('#native-button');
     const semanticSocketURL = await page.evaluate(() => __ws.url);
     assert.equal(new URL(semanticSocketURL).searchParams.get('token'), 'fixture', 'reload keeps the WebSocket session token');
+    const agentStatus = page.locator('#agent-status');
+    assert.equal(await agentStatus.getAttribute('data-phase'), 'idle');
+    assert.equal(await agentStatus.getByText('Ready for a task', { exact: true }).isVisible(), true);
+    await page.evaluate(() => __ws.emit({ type: 'agent_status', status: { phase: 'working', label: 'Checking the test window' } }));
+    assert.equal(await agentStatus.getAttribute('data-phase'), 'working');
+    assert.equal(await agentStatus.getByText('Checking the test window', { exact: true }).isVisible(), true);
+    await page.locator('#native-input').press('Alt+Shift+P');
+    assert.equal(controls.length, 0, 'typing in a native field keeps viewer shortcuts out');
+    await page.getByRole('button', { name: 'Take control', exact: true }).focus();
+    await page.keyboard.press('Alt+Shift+P');
+    const resume = page.getByRole('button', { name: 'Resume agent', exact: true });
+    await resume.waitFor();
+    assert.equal(await page.getByRole('button', { name: 'Take control', exact: true }).isDisabled(), true);
+    await resume.click();
+    await page.getByRole('button', { name: 'Pause agent', exact: true }).waitFor();
+    assert.deepEqual(controls, [true, false].map(paused => ({
+      endpoint: '/api/control', method: 'POST', auth: 'Bearer fixture', data: { paused },
+    })));
+    assert.equal(await agentStatus.getAttribute('data-phase'), 'working', 'pausing does not invent an agent update');
+    const appOutline = page.getByRole('combobox', { name: 'Outline app' });
+    await appOutline.selectOption({ label: 'Demo' });
+    assert.equal(await page.locator('#native-button').evaluate(element => element.classList.contains('window-outline')), true);
+    assert.equal(await page.locator('#native-opaque').evaluate(element => element.classList.contains('window-outline')), false);
+    assert.equal(await page.locator('#native-opaque').isVisible(), true, 'other windows remain visible');
+    await appOutline.selectOption('');
     assert.equal(await page.getByText('No actions yet.', { exact: true }).isVisible(), true);
     await page.evaluate(() => __ws.emit({ type: 'log', action: 'click', node: 'button', ok: true }));
     assert.equal(await page.getByText('No actions yet.', { exact: true }).isVisible(), false);
@@ -205,8 +401,23 @@ function installMock(snapshot) {
     await page.waitForTimeout(150);
     assert.equal(await page.locator('#semantic-overlay').evaluate(element => element.classList.contains('manual')), false);
     assert.equal(await page.locator('#clipboard').isDisabled(), true);
+    await page.getByRole('button', { name: 'Pause agent', exact: true }).focus();
+    await page.keyboard.press('Alt+Shift+Escape');
+    const stopDialog = page.getByRole('dialog', { name: 'Stop the virtual session?' });
+    await stopDialog.waitFor();
+    await stopDialog.getByRole('button', { name: 'Keep running' }).click();
+    await stopDialog.waitFor({ state: 'hidden' });
+    assert.equal(controls.length, 2, 'canceling never sends a stop request');
+    await page.getByRole('button', { name: 'Stop session', exact: true }).click();
+    await stopDialog.getByRole('button', { name: 'Stop session', exact: true }).click();
+    await stopDialog.waitFor({ state: 'hidden' });
+    assert.deepEqual(controls.at(-1), { endpoint: '/api/stop', method: 'POST', auth: 'Bearer fixture', data: null });
+    assert.equal(await page.locator('#connection').textContent(), 'Session stopped');
     assert.deepEqual(errors, []);
-    console.log('PASS frontend: ARIA, click/double click, UTF-8 input, diffs/recovery, takeover lease and clipboard policy');
+    const origin = `http://127.0.0.1:${server.address().port}`;
+    await checkStaleObservation(browser, origin);
+    await checkContactSheet(browser, origin);
+    console.log('PASS frontend: ARIA, UTF-8 input, stale observations, activity, app outlines, agent state, pause, takeover, clipboard, stop confirmation, and timed JPEG contact sheets');
   } finally {
     if (browser) await browser.close();
     await new Promise(resolve => server.close(resolve));

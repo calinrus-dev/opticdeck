@@ -8,7 +8,7 @@ import (
 
 func TestCompactTreeBoundsOutputAndOmitsValues(t *testing.T) {
 	raw := json.RawMessage(`{"revision":17,"nodes":[
-		{"id":"container","role":"frame","name":"Editor"},
+		{"id":"container","role":"group","name":"Editor","actions":["click"]},
 		{"id":"entry","role":"textbox","name":"Editor Unicode","value":"private payload","actions":["set_text"]},
 		{"id":"canvas","role":"vision_fallback","name":"Editor canvas","vision_fallback":true,"bounds":{"x":1,"y":2,"width":30,"height":40}}
 	]}`)

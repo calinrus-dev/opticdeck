@@ -1,4 +1,4 @@
-// Real end-to-end test. First launch tests/fixture.ui in a running SemaDesk.
+// Real end-to-end test. First launch tests/fixture.ui in a running OpticDeck.
 // SEMADESK_STATE=/private/state/state.json node tests/browser.cjs
 // Alternatively set SEMADESK_URL to the complete session URL (including token).
 // Requires development dependency `playwright` and a Chromium installation.
@@ -53,6 +53,17 @@ async function eventually(check, label, timeout = 12000) {
     await page.reload();
     await page.waitForFunction(() => document.getElementById('connection').textContent.includes('VNC + DOM'), null, { timeout: 15000 });
     await page.waitForSelector('#rfb-screen canvas');
+    const statusReply = await context.request.post(api('/api/agent-status'), { headers, data: { phase: 'working', label: 'Checking the demo' } });
+    assert.equal(statusReply.status(), 200);
+    await page.getByText('Checking the demo', { exact: true }).waitFor();
+    await page.getByRole('button', { name: 'Pause agent', exact: true }).click();
+    await page.getByRole('button', { name: 'Resume agent', exact: true }).waitFor();
+    const pausedAction = await context.request.post(api('/api/act'), { headers, data: { action: 'press_key', key: 'Escape' } });
+    assert.equal(pausedAction.status(), 409, 'pause must block native actions');
+    await page.reload();
+    await page.getByRole('button', { name: 'Resume agent', exact: true }).waitFor();
+    await page.getByRole('button', { name: 'Resume agent', exact: true }).click();
+    await page.getByRole('button', { name: 'Pause agent', exact: true }).waitFor();
     const editor = page.getByRole('textbox', { name: 'Editor Unicode', exact: true });
     const checkbox = page.getByRole('checkbox', { name: 'Comprobación', exact: true });
     await editor.waitFor();
@@ -63,8 +74,27 @@ async function eventually(check, label, timeout = 12000) {
     const editorNode = initial.nodes.find(node => node.name === 'Editor Unicode');
     const checkboxNode = initial.nodes.find(node => node.name === 'Comprobación' && /check/i.test(node.role));
     assert.ok(editorNode && checkboxNode, 'GTK fixture must expose editor and checkbox through AT-SPI');
+    const stale = await context.request.post(api('/api/act'), { headers, data: {
+      action: 'click', node: checkboxNode.id, expect_name: 'Old checkbox label',
+    } });
+    assert.equal(stale.status(), 409);
+    assert.equal((await stale.json()).code, 'stale_observation');
+    const fresh = await context.request.get(api('/api/tree?fresh=1'), { headers });
+    assert.equal(fresh.status(), 200);
+    assert.ok((await fresh.json()).nodes.some(node => node.id === checkboxNode.id));
+    const capture = await context.request.post(api('/api/capture'), { headers, data: {
+      frames: 2, interval_ms: 100, x: 10, y: 10, width: 200, height: 120,
+    } });
+    assert.equal(capture.status(), 200);
+    assert.equal(capture.headers()['x-opticdeck-grid'], '2x1');
+    assert.equal(capture.headers()['x-opticdeck-region'], '(10,10) 200x120');
+    assert.equal((await capture.body()).readUInt16BE(), 0xffd8);
+    await page.getByRole('button', { name: 'Capture contact sheet' }).click();
+    const gridPreview = page.getByRole('dialog', { name: 'Contact sheet' });
+    await gridPreview.getByRole('img').waitFor();
+    await gridPreview.getByRole('button', { name: 'Close' }).click();
     const checkedBefore = (checkboxNode.states || []).includes('checked');
-    const value = 'SemaDesk · España 世界 🦊';
+    const value = 'OpticDeck · España 世界 🦊';
     await editor.fill(value);
     await eventually(async () => (await tree()).nodes.find(node => node.id === editorNode.id)?.value === value, 'EditableText UTF-8 native value');
     await checkbox.click();
@@ -91,7 +121,7 @@ async function eventually(check, label, timeout = 12000) {
       await page.locator('#hitboxes').check();
       await page.screenshot({ path: process.env.SEMADESK_SCREENSHOT, fullPage: true });
     }
-    console.log('PASS real browser: noVNC RFB, native AT-SPI ARIA, UTF-8 EditableText, checkbox, password redaction, takeover/release, clipboard');
+    console.log('PASS real browser: noVNC, AT-SPI, stale target guard, capture, pause/reconnect, agent status, Unicode editing, takeover, clipboard');
   } finally {
     await browser.close();
   }

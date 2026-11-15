@@ -1,13 +1,13 @@
 ---
 name: opticdeck
-description: Operate Linux apps in an authorized OpticDeck virtual desktop using native accessibility controls through the browser or CLI. Use the visual preview for opaque regions or final visual checks.
+description: Operate Linux apps in an authorized OpticDeck virtual desktop using native accessibility controls and visual captures through MCP, the browser, or CLI.
 ---
 
 # Operate an OpticDeck session
 
 Use this skill when the user asks you to work in OpticDeck. You need an
-authenticated session URL or CLI access. Use the available browser automation
-that can inspect the DOM and act on controls, or use the CLI directly.
+authenticated session. Prefer OpticDeck's MCP tools when available. The viewer
+and CLI can inspect and act on the same desktop.
 
 ## Choose the session
 
@@ -34,18 +34,22 @@ those temporary directories. You can close the browser while the daemon runs.
 
 ## Read and act
 
-1. Read the DOM or accessibility tree in `#semantic-overlay`, or run
-   `opticdeck tree --compact --match NAME`. Use the full tree only when fields
+1. Use MCP `observe`, read the DOM or accessibility tree in `#semantic-overlay`,
+   or run `opticdeck tree --compact --match NAME`. Use the full tree when fields
    omitted by compact output are needed. Identify the target by role, accessible name, state, and
    `data-node-id`. Distinguish app controls from controls in the viewer toolbar.
-2. Prefer a semantic action. Check whether the node is enabled, visible, and
+2. Prefer a semantic action. Pass the observed name as `expect_name` via MCP
+   or `--expect-name` via CLI when the target has a name. Check whether it is enabled, visible, and
    focused as needed. `data-actions` and `data-shortcut` describe available
    operations. Use `fill` or `set_text` for Unicode text.
-3. Read the changed state after each action. Use a bounded wait and refresh
-   the tree if a node disappears or a revision is missed.
+3. Read the changed state after each action. Use MCP `observe` with `fresh: true`
+   or CLI `tree --fresh` to wait for a new scan. If the server returns
+   `stale_observation`, re-read and choose the target again.
 4. Use visual inspection for regions with `data-vision-fallback="true"` or
    for final visual checks. Crop to the relevant region when possible. Some
-   apps expose a window or canvas without the controls inside it.
+   apps expose a window or canvas without the controls inside it. Use one MCP
+   frame for a static check and a contact sheet for movement. Map coordinate
+   input from the latest tile to native desktop pixels using the capture caption.
 
 Playwright example for controls named **Save** and **Name**:
 
@@ -58,7 +62,7 @@ await desktop.getByRole('button', { name: 'Save', exact: true }).click();
 CLI examples. Replace `NODE_ID` with the ID from the active tree.
 
 ```sh
-opticdeck act --node NODE_ID --action click
+opticdeck act --node NODE_ID --action click --expect-name 'Save'
 opticdeck act --node NODE_ID --action set_text --text 'Unicode text'
 opticdeck act --node NODE_ID --action focus
 opticdeck act --action shortcut --key Ctrl+s
@@ -70,6 +74,9 @@ opaque region, use `--x X --y Y` for input in native framebuffer pixels.
 Resolve ambiguous names with scope, current state, and node ID. Read the
 error and refresh the tree if an action fails. Report the blocker after
 bounded retries.
+
+Use MCP `update_progress` or CLI `agent-status` to share short task updates in
+the viewer. Keep personal data and credentials out of the status.
 
 ## Respect human control
 

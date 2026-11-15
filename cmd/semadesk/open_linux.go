@@ -35,15 +35,14 @@ func openViewer(args []string) error {
 			return err
 		}
 	}
-	u, err := url.Parse(s.URL)
-	if err != nil {
-		return err
-	}
-	u.Path = "/"
-	if s.Token != "" {
-		u.RawQuery = url.Values{"token": {s.Token}}.Encode()
-	}
-	cmd := exec.Command(opener, u.String())
+	cmd := exec.Command(opener, s.viewerURL())
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
+}
+
+func (s state) viewerURL() string {
+	if s.Token == "" {
+		return s.URL + "/"
+	}
+	return s.URL + "/?" + url.Values{"token": {s.Token}}.Encode()
 }

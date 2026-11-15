@@ -1,5 +1,27 @@
 # Validation
 
+## OpticDeck 0.3.0
+
+- The [toolkit benchmark](BENCHMARKS.md) measures live GTK, Qt Widgets, and
+  Chromium/Electron-style controls over 30 runs per toolkit. It reports median
+  tree bytes and observation time.
+- [Board Lab](../benchmarks/chess/) verified a full 63-ply game against its
+  built-in opponent using the virtual desktop. The stale-observation regression
+  moved a white pawn to e4, confirmed that e4 retained its ID with a new name,
+  and verified that the old name and a stale coordinate revision both rejected
+  input. The next fresh scan reported the pawn.
+- The MCP stdio server returned six live frames as a 65,866-byte JPEG over
+  1.15 seconds during the e4 move. The Codex built-in viewer also rendered its
+  own numbered six-frame preview. These measurements describe transport and
+  capture, with model token usage unmeasured.
+- [Relay Run](../benchmarks/arcade/) exercised held keys, four directions,
+  collision, and dash. One validated run finished with both relays in 3.5
+  seconds.
+- Native X11 host sharing was tested in Xvfb with Chromium, including consent,
+  input in the shared desktop, and cleanup. KDE Wayland global shortcuts need
+  bindings approved in the desktop portal. RustDesk opened as a visible
+  virtual window with visual fallback. A remote connection remains untested.
+
 ## OpticDeck 0.2.0
 
 On CachyOS with KDE Wayland and TigerVNC 1.16.2, the Codex built-in browser

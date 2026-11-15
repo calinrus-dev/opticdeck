@@ -15,9 +15,11 @@ import (
 	"net/url"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
@@ -79,6 +81,9 @@ type Server struct {
 	snapshot         model.Snapshot
 	host             string
 	lastError        string
+	agentStatus      *model.AgentStatus
+	actionCancel     context.CancelFunc
+	capturing        atomic.Bool
 	hostView         bool
 	hostInputToken   string
 	hostMonitorScale float64
@@ -165,6 +170,9 @@ func (s *Server) handler() http.Handler {
 	mux.HandleFunc("/api/act", s.actionHTTP)
 	mux.HandleFunc("/api/launch", s.launchHTTP)
 	mux.HandleFunc("/api/stop", s.stopHTTP)
+	mux.HandleFunc("/api/control", s.pauseHTTP)
+	mux.HandleFunc("/api/agent-status", s.agentStatusHTTP)
+	mux.HandleFunc("/api/capture", s.captureHTTP)
 	mux.HandleFunc("/api/clipboard", s.clipboardHTTP)
 	mux.HandleFunc("/ws", s.handleWS)
 	mux.HandleFunc("/rfb", s.handleRFB)
@@ -254,22 +262,32 @@ func (s *Server) status(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.mu.Lock()
-	result := map[string]any{"ok": true, "revision": s.snapshot.Revision, "width": s.snapshot.Width, "height": s.snapshot.Height, "nodes": len(s.nodes), "control": s.control, "semantic_error": s.lastError}
+	result := map[string]any{"ok": true, "revision": s.snapshot.Revision, "width": s.snapshot.Width, "height": s.snapshot.Height, "nodes": len(s.nodes), "control": s.control, "semantic_error": s.lastError, "agent_status": s.agentStatus}
 	s.mu.Unlock()
 	writeJSON(w, 200, result)
 }
 func (s *Server) snapshotLocked() model.Snapshot {
 	result := s.snapshot
 	result.Control = s.control
+	result.AgentStatus = s.agentStatus
 	return result
 }
 func (s *Server) tree(w http.ResponseWriter, r *http.Request) {
 	if !method(w, r, http.MethodGet) {
 		return
 	}
+	fresh := r.URL.Query().Get("fresh") == "1"
+	if fresh {
+		s.refresh()
+	}
 	s.mu.Lock()
 	result := s.snapshotLocked()
+	failed := s.lastError != ""
 	s.mu.Unlock()
+	if fresh && failed {
+		writeError(w, http.StatusServiceUnavailable, "cannot read the current desktop")
+		return
+	}
 	writeJSON(w, 200, result)
 }
 
@@ -395,6 +413,9 @@ func (s *Server) send(c *client, v any) {
 	s.enqueueLocked(c, b)
 	s.mu.Unlock()
 }
+
+var errStaleObservation = errors.New("the observed control or desktop revision changed; read the current desktop and choose the target again")
+
 func (s *Server) actionHTTP(w http.ResponseWriter, r *http.Request) {
 	if !method(w, r, http.MethodPost) {
 		return
@@ -404,6 +425,10 @@ func (s *Server) actionHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	err := s.act(r.Context(), a)
+	if errors.Is(err, errStaleObservation) {
+		writeJSON(w, http.StatusConflict, map[string]any{"ok": false, "code": "stale_observation", "error": err.Error()})
+		return
+	}
 	if err != nil {
 		writeError(w, 409, err.Error())
 		return
@@ -413,36 +438,55 @@ func (s *Server) actionHTTP(w http.ResponseWriter, r *http.Request) {
 func (s *Server) act(ctx context.Context, a model.Action) error {
 	s.gate.Lock()
 	defer s.gate.Unlock()
+	actionCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	stopOnClose := context.AfterFunc(s.ctx, cancel)
+	defer stopOnClose()
 	s.mu.Lock()
-	paused := s.control.Paused
-	s.mu.Unlock()
-	if paused {
-		return errors.New("agent actions are paused by human takeover")
+	if s.control.Paused {
+		s.mu.Unlock()
+		return errors.New("agent actions are paused")
 	}
-	if len(a.Text) > maxMessage || !utf8.ValidString(a.Text) || len(a.Key) > 256 || len(a.Node) > 4096 {
+	s.actionCancel = cancel
+	s.mu.Unlock()
+	defer func() {
+		s.mu.Lock()
+		s.actionCancel = nil
+		s.mu.Unlock()
+	}()
+	if len(a.Text) > maxMessage || !utf8.ValidString(a.Text) || len(a.Key) > 256 || len(a.Node) > 4096 ||
+		(a.ExpectName != nil && (a.Node == "" || len(*a.ExpectName) > 1024)) {
 		return errors.New("invalid action payload")
 	}
 	switch a.Action {
-	case "click", "double_click", "right_click", "set_text", "press_key", "shortcut", "focus":
+	case "click", "double_click", "right_click", "set_text", "press_key", "hold_key", "shortcut", "focus":
 	default:
 		return errors.New("unsupported action")
 	}
+	if a.Action == "hold_key" && (a.Key == "" || a.DurationMS < 100 || a.DurationMS > 2000) {
+		return errors.New("hold_key requires a key and duration_ms between 100 and 2000")
+	}
 	// A fresh scan makes an ID insufficient to act on a widget that was removed,
 	// hidden, moved or covered since the last browser update.
-	actionCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-	s.refreshMu.Lock()
-	nodes, err := s.engine.Snapshot(actionCtx)
-	if err != nil {
+	if a.Node != "" || a.X != nil || a.Y != nil || a.ExpectRevision != nil {
+		s.refreshMu.Lock()
+		nodes, err := s.engine.Snapshot(actionCtx)
+		if err == nil {
+			s.publish(nodes)
+		}
 		s.refreshMu.Unlock()
-		return errors.New("cannot validate semantic target")
+		if err != nil {
+			return errors.New("cannot validate semantic target")
+		}
 	}
-	s.publish(nodes)
-	s.refreshMu.Unlock()
 	s.mu.Lock()
 	n, exists := s.nodes[a.Node]
 	width, height := s.snapshot.Width, s.snapshot.Height
+	revision := s.snapshot.Revision
 	s.mu.Unlock()
+	if (a.ExpectRevision != nil && *a.ExpectRevision != revision) || (a.ExpectName != nil && (!exists || *a.ExpectName != n.Name)) {
+		return errStaleObservation
+	}
 	if a.Node != "" && !exists {
 		return errors.New("stale or hidden semantic target")
 	}
@@ -462,16 +506,19 @@ func (s *Server) act(ctx context.Context, a model.Action) error {
 	if a.X != nil && exists && (*a.X < n.Bounds.X || *a.Y < n.Bounds.Y || *a.X >= n.Bounds.X+n.Bounds.Width || *a.Y >= n.Bounds.Y+n.Bounds.Height) {
 		return errors.New("coordinates outside semantic target")
 	}
-	if a.Node == "" && a.Action != "press_key" && a.Action != "shortcut" && a.X == nil {
+	if a.Node == "" && a.Action != "press_key" && a.Action != "hold_key" && a.Action != "shortcut" && a.X == nil {
 		return errors.New("semantic target or coordinates required")
 	}
-	err = s.engine.Act(actionCtx, a, n)
+	if err := actionCtx.Err(); err != nil {
+		return err
+	}
+	err := s.engine.Act(actionCtx, a, n)
 	safeErr := ""
 	if err != nil {
 		safeErr = "native action failed"
 	}
 	s.mu.Lock()
-	s.broadcastLocked(map[string]any{"type": "log", "time": time.Now().UTC().Format(time.RFC3339Nano), "action": a.Action, "node": a.Node, "ok": err == nil, "error": safeErr})
+	s.broadcastLocked(map[string]any{"type": "log", "time": time.Now().UTC().Format(time.RFC3339Nano), "action": a.Action, "node": a.Node, "target_name": activityTargetName(n), "ok": err == nil, "error": safeErr})
 	s.mu.Unlock()
 	if err != nil {
 		return errors.New(safeErr)
@@ -482,6 +529,24 @@ func (s *Server) act(ctx context.Context, a model.Action) error {
 	}
 	return nil
 }
+
+func activityTargetName(n model.Node) string {
+	switch n.Role {
+	case "button", "checkbox", "radio", "menuitem", "menuitemcheckbox", "menuitemradio", "tab", "link", "slider":
+	default:
+		return ""
+	}
+	if n.VisionFallback || slices.Contains(n.States, "protected") || slices.Contains(n.States, "editable") ||
+		(n.Value != "" && strings.Contains(n.Name, n.Value)) {
+		return ""
+	}
+	name := []rune(strings.Join(strings.Fields(n.Name), " "))
+	if len(name) > 96 {
+		return string(name[:95]) + "…"
+	}
+	return string(name)
+}
+
 func (s *Server) launchHTTP(w http.ResponseWriter, r *http.Request) {
 	if !method(w, r, http.MethodPost) {
 		return
@@ -687,6 +752,9 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 		result := map[string]any{"type": "result", "id": m.ID, "ok": actionErr == nil}
 		if actionErr != nil {
 			result["error"] = actionErr.Error()
+			if errors.Is(actionErr, errStaleObservation) {
+				result["code"] = "stale_observation"
+			}
 		}
 		s.send(c, result)
 	}

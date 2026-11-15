@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Relay Run · OpticDeck</title>
+<link rel="stylesheet" href="relay.css">
+<script src="relay.js" defer></script>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Relay Run</h1>
+    <p>Light both relays, cross the gap, and reach the exit.</p>
+  </header>
+  <div class="game">
+    <div class="board" id="board" tabindex="0" aria-label="Obstacle course">
+      <div class="tiles" id="tiles" aria-hidden="true"></div>
+      <div class="runner" id="runner" aria-hidden="true"></div>
+    </div>
+    <aside aria-label="Run information">
+      <button type="button" id="start">Start run</button>
+      <div class="metrics">
+        <section><h2>Relays</h2><p id="score">0 / 2</p></section>
+        <section><h2>Time</h2><p id="time">0.0 s</p></section>
+      </div>
+      <p id="status" role="status" aria-live="polite">Ready.</p>
+      <p id="position">Column 1, row 6.</p>
+      <dl class="keys">
+        <div><dt><kbd>↑</kbd> <kbd>↓</kbd> <kbd>←</kbd> <kbd>→</kbd></dt><dd>Move. Hold to repeat.</dd></div>
+        <div><dt><kbd>Space</kbd></dt><dd>Dash in the last direction.</dd></div>
+      </dl>
+    </aside>
+  </div>
+</main>
+</body>
+</html>

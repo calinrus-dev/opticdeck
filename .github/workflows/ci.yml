@@ -33,7 +33,7 @@ jobs:
       - name: Install integration dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends tigervnc-standalone-server openbox at-spi2-core dbus dbus-x11 x11-utils libgtk-3-bin xfonts-base fonts-dejavu-core xterm zenity
+          sudo apt-get install -y --no-install-recommends tigervnc-standalone-server openbox at-spi2-core dbus dbus-x11 x11-utils libgtk-3-bin xfonts-base fonts-dejavu-core xterm zenity qt6-base-dev python3-gi gir1.2-gtk-3.0
       - name: Unit tests
         run: make test
       - name: Race detector
@@ -50,8 +50,18 @@ jobs:
       - name: Live browser and GTK session
         run: |
           state=$(mktemp -d)
-          trap './bin/semadesk stop --state-dir "$state" >/dev/null 2>&1 || true; rm -f "$state/daemon.log" "$state/session.lock"; rmdir "$state" 2>/dev/null || true' EXIT
-          ./bin/semadesk start --state-dir "$state" >/dev/null
-          ./bin/semadesk launch --state-dir "$state" -- gtk-builder-tool preview "$PWD/tests/fixture.ui" >/dev/null
+          trap './bin/opticdeck stop --state-dir "$state" >/dev/null 2>&1 || true' EXIT
+          ./bin/opticdeck start --state-dir "$state" >/dev/null
+          ./bin/opticdeck launch --state-dir "$state" -- gtk-builder-tool preview "$PWD/tests/fixture.ui" >/dev/null
           CHROMIUM_EXECUTABLE="$(node -p 'require("playwright").chromium.executablePath()')" \
             SEMADESK_STATE="$state/state.json" node tests/browser.cjs
+      - name: Run GTK and Qt benchmark smoke test
+        run: |
+          OPTICDECK_BENCH_SAMPLES=5 PYTHON=/usr/bin/python3 XVNC=Xtigervnc \
+            CHROMIUM_EXECUTABLE="$(command -v google-chrome)" node benchmarks/run.cjs gtk qt > toolkit-benchmarks.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: toolkit-benchmarks
+          path: toolkit-benchmarks.json
+          if-no-files-found: ignore

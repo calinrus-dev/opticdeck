@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Board Lab · OpticDeck</title>
+  <link rel="stylesheet" href="/chess.css">
+  <script type="module" src="/chess.mjs"></script>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>Board Lab</h1>
+      <p>Play White against the machine.</p>
+    </header>
+    <div class="game">
+      <section class="board" aria-label="Chessboard" id="board"></section>
+      <aside aria-label="Game information">
+        <form id="new-game">
+          <label for="position">Starting position</label>
+          <select id="position">
+            <option value="standard">Standard game</option>
+            <option value="mate-two">Mate in two</option>
+          </select>
+          <button type="submit">Start game</button>
+        </form>
+        <div class="state" id="state" role="status" aria-live="polite"></div>
+        <section aria-labelledby="moves-heading">
+          <h2 id="moves-heading">Move history</h2>
+          <ol id="history"></ol>
+        </section>
+      </aside>
+    </div>
+  </main>
+</body>
+</html>

@@ -6,17 +6,33 @@
   <meta name="referrer" content="no-referrer">
   <title>OpticDeck · Virtual Linux desktop</title>
   <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="/contact-sheet.css">
 </head>
 <body>
   <header>
     <div class="brand"><span class="mark" aria-hidden="true">O</span><div><strong>OpticDeck</strong><span class="caption">Virtual Linux desktop</span></div></div>
     <span id="connection" class="status" role="status">Connecting…</span>
-    <label class="debug-toggle"><input id="hitboxes" type="checkbox"> Show hitboxes</label>
-    <button id="takeover" type="button" aria-describedby="mode" disabled>Take control</button>
+    <div class="viewer-controls">
+      <label class="debug-toggle"><input id="hitboxes" type="checkbox"> Show hitboxes</label>
+      <button id="pause-agent" type="button" aria-keyshortcuts="Alt+Shift+P" aria-describedby="mode" disabled><span id="pause-agent-label">Pause agent</span><kbd aria-hidden="true">Alt+Shift+P</kbd></button>
+      <button id="takeover" type="button" aria-describedby="mode" disabled>Take control</button>
+      <button id="stop-session" class="danger-button" type="button" aria-keyshortcuts="Alt+Shift+Escape" aria-haspopup="dialog" disabled>Stop session<kbd aria-hidden="true">Alt+Shift+Esc</kbd></button><!-- gitleaks:allow (ARIA keyboard shortcut) -->
+    </div>
   </header>
   <main>
     <section id="desktop-panel" aria-label="Virtual desktop">
-      <div class="desktop-toolbar"><span id="mode" role="status">Waiting for session</span><span id="metrics">Waiting for snapshot</span></div>
+      <div class="desktop-toolbar">
+        <span id="mode" role="status">Waiting for session</span>
+        <span id="metrics">Waiting for snapshot</span>
+        <label class="app-picker">Outline app<select id="app-outline" disabled><option value="">None</option></select></label>
+        <button id="capture-contact-sheet" type="button" aria-haspopup="dialog" disabled>Capture contact sheet</button>
+        <span id="contact-sheet-status" role="status"></span>
+      </div>
+      <div id="agent-status" class="agent-status" role="status">
+        <span class="agent-caption">Agent status</span>
+        <strong id="agent-phase">No update yet</strong>
+        <span id="agent-label" hidden></span>
+      </div>
       <div id="latest-action" class="latest-action" hidden>
         <span class="latest-caption">Latest action</span>
         <span id="latest-action-text"></span>
@@ -45,6 +61,28 @@
       </section>
     </aside>
   </main>
+  <dialog id="stop-dialog" aria-labelledby="stop-heading" aria-describedby="stop-description">
+    <form method="dialog">
+      <h2 id="stop-heading">Stop the virtual session?</h2>
+      <p id="stop-description">This closes the apps in the virtual desktop. Save unfinished work before stopping.</p>
+      <p id="stop-error" role="alert" hidden>Could not stop the virtual session. Try again or check the daemon.</p>
+      <div class="dialog-actions">
+        <button id="cancel-stop" type="submit" autofocus>Keep running</button>
+        <button id="confirm-stop" class="danger-button" type="button">Stop session</button>
+      </div>
+    </form>
+  </dialog>
+  <dialog id="contact-sheet-dialog" aria-labelledby="contact-sheet-heading">
+    <form method="dialog">
+      <div class="contact-sheet-heading">
+        <h2 id="contact-sheet-heading">Contact sheet</h2>
+        <button type="submit" autofocus>Close</button>
+      </div>
+      <p id="contact-sheet-detail"></p>
+      <img id="contact-sheet-image" alt="">
+      <div class="contact-sheet-actions"><a id="contact-sheet-download" download>Save JPEG</a></div>
+    </form>
+  </dialog>
   <noscript>Enable JavaScript to connect to the desktop and sync its controls.</noscript>
   <script type="module" src="/overlay.js"></script>
 </body>

@@ -1,0 +1,20 @@
+#contact-sheet-status { color: #aac0cd; font-size: 12px; overflow-wrap: anywhere; }
+#contact-sheet-status:empty { display: none; }
+#contact-sheet-dialog {
+  width: min(980px, calc(100% - 24px));
+  max-height: calc(100% - 24px);
+  padding: 16px;
+  border: 1px solid #466679;
+  border-radius: 10px;
+  background: #14222d;
+  color: #ecf5f8;
+}
+#contact-sheet-dialog::backdrop { background: #060d14bf; }
+.contact-sheet-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.contact-sheet-heading h2 { margin: 0; font: 650 17px/1.35 system-ui, sans-serif; }
+#contact-sheet-detail { margin: 8px 0 12px; color: #b1c7d1; font-size: 12px; }
+#contact-sheet-image { display: block; width: 100%; max-height: 67dvh; object-fit: contain; background: #111c25; border: 1px solid #2d4253; border-radius: 6px; }
+.contact-sheet-actions { display: flex; justify-content: flex-end; margin-top: 12px; }
+#contact-sheet-download { display: inline-block; padding: 8px 11px; border: 1px solid #568b78; border-radius: 6px; background: #22483e; color: #e7faf3; font-size: 13px; text-decoration: none; }
+#contact-sheet-download:hover { background: #2c5b4c; }
+#contact-sheet-download:focus-visible { outline: 2px solid #8fe9cd; outline-offset: 3px; }

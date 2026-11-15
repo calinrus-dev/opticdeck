@@ -37,6 +37,7 @@ type Session struct {
 	dir         string
 	env         []string
 	log         io.Writer
+	accessBus   string
 	displayLock *os.File
 	mu          sync.Mutex
 	children    []*child
@@ -193,6 +194,12 @@ func (s *Session) RuntimeDir() string { return s.dir }
 
 func (s *Session) Done() <-chan error { return s.done }
 
+func (s *Session) SetAccessibilityAddress(address string) {
+	s.mu.Lock()
+	s.accessBus = address
+	s.mu.Unlock()
+}
+
 func (s *Session) Launch(argv []string) (int, error) {
 	if len(argv) == 0 || argv[0] == "" {
 		return 0, errors.New("application command is empty")
@@ -200,7 +207,13 @@ func (s *Session) Launch(argv []string) (int, error) {
 	cmd := exec.Command(argv[0], argv[1:]...)
 	// GUI applications such as zenity can print entered secrets on stdout.
 	// Their output must never become the supervisor's persistent action log.
-	cmd.Env, cmd.Stdout, cmd.Stderr = s.env, io.Discard, io.Discard
+	cmd.Env, cmd.Stdout, cmd.Stderr = s.Env(), io.Discard, io.Discard
+	s.mu.Lock()
+	accessibilityAddress := s.accessBus
+	s.mu.Unlock()
+	if accessibilityAddress != "" {
+		cmd.Env = append(cmd.Env, "AT_SPI_BUS_ADDRESS="+accessibilityAddress, "ATSPI_BUS_ADDRESS="+accessibilityAddress)
+	}
 	return s.start(cmd, false)
 }
 

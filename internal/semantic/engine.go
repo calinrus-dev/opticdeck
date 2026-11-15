@@ -47,6 +47,7 @@ type objectInfo struct {
 
 type Engine struct {
 	conn      *dbus.Conn
+	address   string
 	desktop   *desktop.Desktop
 	changes   chan struct{}
 	signals   chan *dbus.Signal
@@ -74,6 +75,9 @@ func New(ctx context.Context, busAddress string, d *desktop.Desktop) (*Engine, e
 	if err = bus.CallWithContext(initCtx, "org.a11y.Bus.GetAddress", 0).Store(&address); err != nil {
 		return nil, fmt.Errorf("start AT-SPI2 bus (install at-spi2-core): %w", err)
 	}
+	if !strings.HasPrefix(address, "unix:") {
+		return nil, errors.New("AT-SPI2 did not report a local Unix bus address")
+	}
 	const statusInterface = "org.a11y.Status"
 	if err = bus.CallWithContext(initCtx, properties+".Set", 0, statusInterface, "IsEnabled", dbus.MakeVariant(true)).Err; err != nil {
 		return nil, fmt.Errorf("enable AT-SPI2: %w", err)
@@ -94,7 +98,7 @@ func New(ctx context.Context, busAddress string, d *desktop.Desktop) (*Engine, e
 		return nil, fmt.Errorf("connect AT-SPI2 bus: %w", err)
 	}
 	ctx, cancel := context.WithCancel(ctx)
-	e := &Engine{conn: conn, desktop: d, changes: make(chan struct{}, 1), signals: make(chan *dbus.Signal, 128), cancel: cancel, refs: map[string]objectInfo{}}
+	e := &Engine{conn: conn, address: address, desktop: d, changes: make(chan struct{}, 1), signals: make(chan *dbus.Signal, 128), cancel: cancel, refs: map[string]objectInfo{}}
 	conn.Signal(e.signals)
 	for _, name := range []string{"Object", "Window", "Focus", "Cache"} {
 		if err = conn.AddMatchSignal(dbus.WithMatchInterface("org.a11y.atspi.Event." + name)); err != nil {
@@ -153,6 +157,7 @@ func call(ctx context.Context, obj dbus.BusObject, method string, args ...any) *
 }
 
 func (e *Engine) Changes() <-chan struct{} { return e.changes }
+func (e *Engine) Address() string          { return e.address }
 func (e *Engine) Close() error {
 	var err error
 	e.closeOnce.Do(func() { e.cancel(); e.conn.RemoveSignal(e.signals); err = e.conn.Close(); e.wg.Wait() })
@@ -291,6 +296,8 @@ func normalizeRole(role string, interfaces map[string]bool) string {
 		return "status"
 	case "label", "static":
 		return "text"
+	case "document web", "web document", "document frame", "document text":
+		return "document"
 	case "heading", "link", "slider", "separator", "menu", "paragraph", "document":
 		return r
 	default:
@@ -382,22 +389,20 @@ func (e *Engine) Snapshot(ctx context.Context) ([]model.Node, error) {
 						bounds = visibleBounds(intersect(bounds, w.Bounds), w.ID, w.Z, windows)
 						if area(bounds) > 0 {
 							n := model.Node{ID: id, Parent: q.parent, Role: normalizeRole(role, interfaces), States: stateNames(states), Actions: []string{}, Bounds: bounds, Window: w.ID, Z: w.Z, Depth: q.depth}
-							var props map[string]dbus.Variant
-							if call(ctx, obj, properties+".GetAll", accessible).Store(&props) == nil {
-								if v, ok := props["Name"]; ok {
-									n.Name, _ = v.Value().(string)
-									n.Name = clean(n.Name, 1024)
-								}
+							var name dbus.Variant
+							if call(ctx, obj, properties+".Get", accessible, "Name").Store(&name) == nil {
+								n.Name, _ = name.Value().(string)
+								n.Name = clean(n.Name, 1024)
 							}
 							info := objectInfo{Ref: q.ref, Interfaces: interfaces, Role: role}
 							if interfaces[actionInterface] {
 								_ = call(ctx, obj, actionInterface+".GetActions").Store(&info.Actions)
 								if len(info.Actions) > 0 {
 									n.Actions = append(n.Actions, "click")
-									n.Shortcut = keyBinding(info.Actions[0].KeyBinding)
+									n.Shortcut = keyBinding(info.Actions[primaryAction(info.Actions)].KeyBinding)
 								}
 							}
-							if interfaces[editableText] {
+							if interfaces[editableText] || (n.Role == "textbox" && stateHas(states, 7) && !stateHas(states, 43)) {
 								n.Actions = append(n.Actions, "set_text")
 							}
 							if stateHas(states, 11) {
@@ -509,6 +514,9 @@ func (e *Engine) Act(ctx context.Context, a model.Action, n model.Node) error {
 		obj = e.conn.Object(info.Ref.Bus, info.Ref.Path)
 	}
 	focus := func() error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if obj != nil && info.Interfaces[component] {
 			var ok bool
 			if err := call(ctx, obj, component+".GrabFocus").Store(&ok); err == nil && ok {
@@ -541,13 +549,16 @@ func (e *Engine) Act(ctx context.Context, a model.Action, n model.Node) error {
 	case "click":
 		if obj != nil && len(info.Actions) > 0 && a.X == nil {
 			var ok bool
-			if err := call(ctx, obj, actionInterface+".DoAction", int32(0)).Store(&ok); err != nil {
+			if err := call(ctx, obj, actionInterface+".DoAction", int32(primaryAction(info.Actions))).Store(&ok); err != nil {
 				// A timeout is ambiguous: a late native action must never be
 				// followed automatically by another XTest click.
 				return fmt.Errorf("AT-SPI2 DoAction: %w", err)
 			} else if ok {
 				return nil
 			}
+		}
+		if err := ctx.Err(); err != nil {
+			return err
 		}
 		return e.desktop.Click(x, y, 1, 1)
 	case "double_click":
@@ -567,6 +578,9 @@ func (e *Engine) Act(ctx context.Context, a model.Action, n model.Node) error {
 			}
 		}
 		if err := focus(); err != nil {
+			return err
+		}
+		if err := ctx.Err(); err != nil {
 			return err
 		}
 		if obj == nil || !info.Interfaces[component] {
@@ -590,6 +604,13 @@ func (e *Engine) Act(ctx context.Context, a model.Action, n model.Node) error {
 			}
 		}
 		return e.desktop.PressKey(a.Key)
+	case "hold_key":
+		if n.ID != "" {
+			if err := focus(); err != nil {
+				return err
+			}
+		}
+		return e.desktop.HoldKey(ctx, a.Key, time.Duration(a.DurationMS)*time.Millisecond)
 	case "shortcut":
 		if a.Key == "" {
 			return errors.New("key chord is required")
@@ -603,4 +624,17 @@ func (e *Engine) Act(ctx context.Context, a model.Action, n model.Node) error {
 	default:
 		return fmt.Errorf("unsupported action %q", a.Action)
 	}
+}
+
+// Toolkit providers order actions differently. Pick an activation action
+// before auxiliary ones such as showing a menu or moving focus.
+func primaryAction(actions []actionInfo) int {
+	for _, name := range []string{"click", "press", "activate", "toggle", "check", "uncheck", "select", "open", "expand", "collapse"} {
+		for i, action := range actions {
+			if strings.EqualFold(strings.TrimSpace(action.Name), name) {
+				return i
+			}
+		}
+	}
+	return 0
 }
